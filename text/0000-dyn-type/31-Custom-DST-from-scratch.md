@@ -9,7 +9,8 @@ This section provides an in-depth description about how custom DST is designed t
 - [`Object` trait](#object-trait)
 - [Automatically implementing `Object` for every type](#automatically-implementing-object-for-every-type)
 - [Customizing size and alignment](#customizing-size-and-alignment)
-- [Compact size](#compact-size)
+- [Reduction](#reduction)
+- [Aliasing](#aliasing)
 - [Unsized enum](#unsized-enum)
 - [Deallocation](#deallocation)
 - [Unsizing](#unsizing)
@@ -78,37 +79,62 @@ inconsistency. Here we first list all scenarios we want this RFC to achieve.
 
 ## Syntax
 
+While there are many different DST examples, the memory content of all of these can be safely
+expressed as an ordinary DST struct:
+
+```rust ,ignore
+struct Mat<T>([T]);
+struct CStr([c_char]);
+struct Wtf8Buf([u8]);
+#[repr(align(2))] struct OsStr([u8]);
+struct BitSlice([u8]);
+struct PArray<T>(usize, [T]);
+struct Thin<T: ?Sized>(T::Meta, T);
+```
+
+What makes custom DST different is just their metadata.
+
 We opt for declaring a custom DST using a dedicated syntax, unlike [RFC #1524] which expresses this
 via a normal struct declaration + an impl, since being a custom DST is a property of the type
 itself. This is similar to the auto trait syntax, changing from a normal trait + `impl Trait for ..`
 to a dedicated syntax `auto trait Trait {}`.
 
-The syntax should also provide a place to encode variance of generic parameters. In Rust, variances
-of ADTs are computed by variances of its fields. Therefore the custom DST declaration should also
-contain a “field”. This is solved in RFC #1524, but not in [@japaric’s draft].
-
-A DST pointer `&Dst` can be represented as `(&Content, Meta)`. Therefore we choose our first syntax
-as
+Our custom DST should provide their custom metadata, and the underlying DST struct representation.
+Therefore we choose our first syntax like this:
 
 ```rust ,ignore
-dyn type Dst(Content; Meta);
-```
+dyn struct CStr(())([c_char]);
+//              ^~ ^~~~~~~~~~
+//               |  underlying representation
+//               |
+//               metadata
 
-Example:
-
-```rust ,ignore
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 struct MatMeta {
     height: usize,
     width: usize,
     stride: usize,
 }
-dyn type Mat<T>(T; MatMeta);
+dyn struct Mat<T>(MatMeta) {
+    elements: [T],
+}
+
+enum Encoding {
+    Utf8,
+    Ucs2,
+}
+#[repr(align(2))]
+dyn struct OsStr(Encoding)([u8]);
+
+dyn struct Thin<T: ?Sized>(()) {
+    header: T::Meta,
+    content: T,
+}
 ```
 
 “`dyn`” is picked because it means dynamic, and will likely be converted to a keyword thanks to
-`dyn Trait` ([RFC #2113]), so we don’t need to introduce another contextual keyword. Adding a `type`
-makes it spell out “dynamic type”, as well as preventing potential misinterpretation as a
+`dyn Trait` ([RFC #2113]), so we don’t need to introduce another contextual keyword. Adding a
+`struct` makes it spell out “dynamic struct“, as well as preventing potential misinterpretation as a
 `dyn Trait`.
 
 ## `Object` trait
@@ -122,8 +148,7 @@ trait Object {
 }
 ```
 
-That is, every DST type `&Dst` will be represented as the tuple `(&(), Dst::Meta)` in memory (the
-`Content` type is omitted, and we will explain it in the “Rationale” section).
+That is, every type `&Dst` will be represented as the tuple `(&Something, Dst::Meta)` in memory.
 
 We need to ensure `&T` and `*T` still works, i.e. all existing traits implemented for these pointer
 types must not be affected by custom DST. This imposes many restrictions on `Meta`:
@@ -185,7 +210,7 @@ special, and be implemented by the compiler like the `Sized` trait.
 | `dyn Trait` | `&'static TraitMeta<TraitVtable>` |
 | `extern type` | `()` |
 | ADTs | `<LastField>::Meta` |
-| `dyn type` | `Meta` |
+| `dyn struct` | `Meta` |
 
 ## Customizing size and alignment
 
@@ -213,7 +238,7 @@ automatically-implemented `Object` calls methods in this second trait. That mean
 declaration will expand to
 
 ```rust ,ignore
-dyn type Dst(C; M);
+dyn struct Dst(M)(C);
 impl Object for Dst {
     type Meta = M;
     fn size_of_val(&self) -> usize {
@@ -230,11 +255,7 @@ and the user will need to implement `DynSized` manually.
 ```rust ,ignore
 trait DynSized: Object {
     fn size_of_val(&self) -> usize;
-
-    fn align_of_val(&self) -> usize {
-        // for convenience --- this default implementation is usually correct.
-        align_of::<C>()
-    }
+    fn align_of_val(&self) -> usize;
 }
 ```
 
@@ -278,33 +299,91 @@ Both types can be *coerced* into `*S<dyn Debug>`. The type `S<dyn Debug>` itself
 the alignment of field `b`. This can only be obtained via the type information stored in the trait
 object’s metadata.
 
-## Compact size
+## Reduction
 
-When calculating the offset of a DST field in an unsized struct, we note that it cannot be the
-`size_of` of the fields before it, since the padding of the second-last field can be occupied.
+Recall that every custom DST has a corresponding ordinary DST struct. We want to be able to treat
+every aspect of the custom DST as if the ordinary DST to maintain safety. So what the user should
+provide is not `size_of_val`/`align_of_val`, but a function which produces the original DST which we
+compute the size and alignment from it instead. We could such process **reduction**.
 
-```rust
-struct S {
-    a: u16,
-    b: u8,
-    c: [u8],    // offset is 3, not 4.
-}
-```
-
-It is convenient for us to define the *compact size of* a type, which is a size minus the trailing
-paddings. This has been proposed in [RFC issue #1397], where the “stride” is today’s `size_of`. See
-that issue for further rationales.
-
-A DST could also provide the compact size, thus our `Object` trait is expanded to
-
-```rust
+```rust ,ignore
 trait Object {
     type Meta: Copy + Send + Sync + Ord + Hash + 'static;
-    fn align_of_meta(meta: Self::Meta) -> usize;
-    fn size_of_val(&self) -> usize;
-    fn compact_size_of_val(&self) -> usize { self.size_of_val() }
+    type Reduced: ?Sized;
+}
+
+trait Reduce: Object {
+    fn reduced_meta(&self) -> Self::Reduced::Meta;
 }
 ```
+
+When we create a `dyn struct`, the compiler should provide an anonymous “reduced” struct
+
+```rust ,ignore
+dyn struct Mat<T>(MatMeta)([T]);
+
+#[anonymous]
+struct Foo_Reduced<T>([T]);
+
+impl<T> Object for Foo<T> {
+    type Meta = MatMeta;
+    type Reduced = Foo_Reduced<T>;
+
+    fn align_of_meta(meta: Self::Meta) -> usize { /* to be explored later */ }
+    fn size_of_val(&self) -> usize { reduce(self).size_of_val() }
+}
+```
+
+and user just need to provide
+
+```rust ,ignore
+impl<T> Reduce for Mat<T> {
+    fn reduced_meta(&self) -> usize { // the metadata of [T] is a usize, the length.
+        meta(self).len()
+    }
+}
+```
+
+The problem here is that we cannot forward `align_of_meta` to `reduced_meta` since we don’t have
+`self` in the first place. This forces us to either make `reduced_meta` take only `Self::Meta`, or
+make `align_of_meta` not rely on reduction. To support thin DSTs like `CStr`, `reduced_meta` must be
+allowed to read the content, which leaves us with the other option.
+
+This means custom DSTs must have a compile-time alignment. This rules out using trait objects as a
+part of custom DSTs. Hopefully this will be a rare case.
+
+To distinguish between trait objects and other DSTs, we have to introduce a new trait, `Aligned`,
+which marks the type as having a compile-time alignment. This also has a nice side effect of
+relaxing the bounds of `core::mem::align_of`.
+
+## Aliasing
+
+Representing custom DSTs through reduction allows the compiler to manipulate them as if normal Rust
+types, but there is a potential hazard regarding borrow-checking.
+
+Let’s revisit matrix. A matrix’s metadata consists of three numbers, the width, height and stride.
+The stride can be larger than the width when the rectangular slice does not include all columns.
+
+```
+┌┄┄┄┄┬┄┄┄┄┲━━━━┳━━━━┱┄┄┄┄┐  highlighted region:
+┆  0 ┆  1 ┃  2 ┃  3 ┃  4 ┆      width = 2
+├┄┄┄┄┼┄┄┄┄╊━━━━╋━━━━╉┄┄┄┄┤      height = 2
+┆  5 ┆  6 ┃  7 ┃  8 ┃  9 ┆      stride = 5
+├┄┄┄┄┼┄┄┄┄╄━━━━╇━━━━╃┄┄┄┄┤
+┆ 10 ┆ 11 ┆ 12 ┆ 13 ┆ 14 ┆
+└┄┄┄┄┴┄┄┄┄┴┄┄┄┄┴┄┄┄┄┴┄┄┄┄┘
+```
+
+In the linear representation as a `[T]`, it will contain `[2, 3, 4, 5, 6, 7, 8]`. Note that the
+irrelevant entries `4, 5, 6` are included. This means providing mutable access to the reduced type
+is unsafe. Ideally we should represent this memory as `∃w,h,s: [([T; w], [Opaque<T>; s-w]); h]`, but
+encoding this thing in the type system is just as error-prone as writing actual checking code, and
+thus decided against doing this.
+
+This also means even if we have two `&mut Mat<T>`, there memory may be physically overlapping,
+although they are still logically disjoint. It is hard to know what LLVM is going to do with two
+`noalias` pointers pointing at different but overlapping memory, if it turns out to cause
+mis-compilation ([issue #31681]), we may need to remove `noalias` annotations for custom DSTs.
 
 ## Unsized enum
 
@@ -331,10 +410,7 @@ The metadata in one of the three representations:
 
     We cannot correctly implement `Object::align_of_meta`, which we can’t know which variant is
     active. The only way to properly compute the alignment is if it doesn’t depend on the metadata
-    at all. This rules out using trait objects in an unsized enum.
-
-    To distinguish between trait objects and other DSTs, we have to introduce a new trait,
-    `Aligned`, which marks the type as having a compile-time alignment.
+    at all, i.e. all custom DSTs must be `Aligned`.
 
 * ***If we picked enum as metadata —***
 
@@ -346,31 +422,14 @@ The metadata in one of the three representations:
     Also, a sized enum cannot have any metadata, causing a strange discontinuity with its unsized
     counterpart.
 
-We do not decide which representation should be chosen. For best future compatibility, we should
-introduce the `Aligned` trait. This also has a nice side effect of relaxing the bounds of
-`core::mem::align_of`.
+We do not decide which representation should be chosen. Though, it does show that aligned DST would
+probably be easier to reason with.
 
 ## Deallocation
 
-Since the compiler does not have knowledge of the actual content of a DST, disposal will need to be
-handled by a custom `Drop` implementation. The compiler-generated destructor will not do anything
-when a DST without `Drop` impl is dropped.
-
-```rust ,ignore
-impl<T> Drop for Mat<T> {
-    fn drop(&mut self) {
-        unsafe {
-            if needs_drop::<T>() {
-                for element in self {
-                    drop_in_place(element);
-                }
-            }
-        }
-    }
-}
-```
-
-The destructor is to be written as:
+Since we claimed a custom DST has the same memory representation as its reduction, the compiler
+could use it to drop its fields. The type can also implement `Drop` if needed. The destructor
+(`drop_in_place`) will be generated as:
 
 ```rust ,ignore
 // Pseudo code for compiler's intrinsic implementation.
@@ -383,7 +442,7 @@ pub fn drop_in_place<T: ?Sized>(ptr: *mut T) {
     }
     if T: Copy || T is union || T is leaf type {
         // do nothing
-    } else if T is struct || T is enum {    // includes unsized ADTs
+    } else if T is struct || T is enum || T is custom DST {
         for field in T.fields() {
             drop_in_place(&mut ptr.field);
         }
@@ -401,13 +460,23 @@ pub const fn needs_drop<T: ?Sized>() -> bool {
         true
     } else if T: Copy || T is union || T is leaf type {
         false
-    } else if T is struct || T is enum {
+    } else if T is struct || T is enum || T is custom DST {
         T.fields().any(|F| needs_drop::<F>())
     } else {
         false
     }
 }
 ```
+
+The `needs_drop` function should return the following when an unsized type is given:
+
+| Type                      | Result                        |
+|---------------------------|-------------------------------|
+| Slices `[T]`              | `needs_drop::<T>()`           |
+| `str`                     | false                         |
+| Trait objects `dyn Trait` | true                          |
+| `extern type`             | false                         |
+| Custom DST                | `needs_drop::<T::Reduced>`    |
 
 See the [Customizing `needs_drop`](0000-dyn-type/52-Extensions#customizing-needs_drop) extension for
 further ideas.
@@ -524,17 +593,11 @@ we restrict the kinds of DSTs to these two.
 
 ```rust
 trait RegularSized: DynSized {
-    fn size_of_meta(meta: Self::Meta) -> usize;
-    fn compact_size_of_meta(meta: Self::Meta) -> usize {
-        Self::size_of_meta(meta)
-    }
+    fn reduce_with_meta(meta: Self::Meta) -> Self::Reduced::Meta;
 }
 
 trait InlineSized: DynSized<Meta = ()> + Aligned {
-    fn size_of_ptr(ptr: *const u8) -> usize;
-    fn compact_size_of_ptr(ptr: *const u8) -> usize {
-        Self::size_of_ptr(ptr)
-    }
+    fn reduce_with_ptr(ptr: *const u8) -> Self::Reduced::Meta;
 }
 ```
 
@@ -545,11 +608,11 @@ now be changed to a simple marker trait.
 trait DynSized: Object {}
 ```
 
-We also add a new syntax to declare a custom inline DST.
+We also modify the syntax for declaring a custom inline DST.
 
 ```rust
-dyn type CStr(c_char; ..);
-//                    ^~
+dyn struct CStr(..)([c_char]);
+//              ^~
 ```
 
 ## Allocation

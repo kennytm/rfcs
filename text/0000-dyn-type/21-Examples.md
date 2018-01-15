@@ -51,23 +51,16 @@ impl MatMeta {
 
 Declare our DST.
 
-We define the size and “compact size” of the type. The compact size is the size excluding trailing
-padding.
+We define the size of the type.
 
 ```rust ,ignore
-pub dyn type Mat<T>(T; MatMeta);
+pub dyn struct Mat<T>(MatMeta) {
+    content: [T],
+}
 
 impl<T> RegularSized for Mat<T> {
-    fn size_of_meta(meta: MatMeta) -> usize {
-        meta.len() * mem::size_of::<T>()
-    }
-    fn compact_size_of_meta(meta: MatMeta) -> usize {
-        let len = meta.len();
-        if len == 0 {
-            0
-        } else {
-            mem::size_of::<T>() * (len - 1) + mem::compact_size_of::<T>()
-        }
+    fn reduce_with_meta(meta: MatMeta) -> usize {
+        meta.len()
     }
 }
 ```
