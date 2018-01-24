@@ -1,4 +1,4 @@
-# Norminative changes
+# Changes
 
 This section provides instructions what needs to be added and changed in the standard library and
 compiler to implement this RFC.
@@ -6,17 +6,19 @@ compiler to implement this RFC.
 <!-- TOC depthFrom:2 -->
 
 - [Core traits](#core-traits)
-- [Reduction and promotion](#reduction-and-promotion)
+- [Core functions](#core-functions)
 - [Size and alignment](#size-and-alignment)
-- [Core methods](#core-methods)
 - [Drop](#drop)
 - [Unsize](#unsize)
 - [Sized types](#sized-types)
 - [Slices](#slices)
 - [Trait objects](#trait-objects)
-- [Tuples and structs](#tuples-and-structs)
+- [Tuples](#tuples)
+- [Structs](#structs)
 - [Foreign types](#foreign-types)
 - [Custom DST](#custom-dst)
+    - [Custom regular DST](#custom-regular-dst)
+    - [Custom inline DST](#custom-inline-dst)
 - [Placement protocol](#placement-protocol)
 - [Lints](#lints)
     - [Milestone 0: Warning period](#milestone-0-warning-period)
@@ -34,9 +36,11 @@ Introduce the `core::marker::Object` trait:
 ```rust ,ignore
 #[unstable(feature = "dyn_type", issue = "999999")]
 #[lang = "object"]
+#[fundamental]
 pub trait Object {
     type Meta: Sized + Copy + Send + Sync + Ord + Hash + 'static;
-    type Reduced: DynSized + ?Sized;
+    fn size_of_val(val: *const Self) -> usize;
+    fn align_of_meta(meta: Self::Meta) -> usize;
 }
 ```
 
@@ -46,25 +50,37 @@ Introduce the `core::marker::DynSized` marker trait:
 #[unstable(feature = "dyn_type", issue = "999999")]
 #[lang = "dyn_sized"]
 #[rustc_on_unimplemented = "`{Self}` does not have a size known at run-time"]
+#[fundamental]
 pub trait DynSized: Object {}
 ```
 
-Introduce the `core::marker::RegularSized` trait:
+Introduce the `core::marker::CustomDst` trait:
 
 ```rust ,ignore
 #[unstable(feature = "dyn_type", issue = "999999")]
-#[lang = "regular_sized"]
-pub trait RegularSized: DynSized {
+#[lang = "custom_dst"]
+pub trait CustomDst: DynSized {
+    type Reduced: DynSized + ?Sized;
+    fn reduced_meta(val: *const Self) -> Self::Reduced::Meta;
+}
+```
+
+Introduce the `core::marker::RegularDst` trait:
+
+```rust ,ignore
+#[unstable(feature = "dyn_type", issue = "999999")]
+#[lang = "regular_dst"]
+pub trait RegularDst: CustomDst {
     fn reduce_with_meta(meta: Self::Meta) -> Self::Reduced::Meta;
 }
 ```
 
-Introduce the `core::marker::InlineSized` trait:
+Introduce the `core::marker::InlineDst` trait:
 
 ```rust ,ignore
 #[unstable(feature = "dyn_type", issue = "999999")]
-#[lang = "inline_sized"]
-pub unsafe trait InlineSized: DynSized<Meta = ()> + Aligned {
+#[lang = "inline_dst"]
+pub unsafe trait InlineDst: DynSized<Meta = ()> + Aligned {
     fn reduce_with_ptr(ptr: *const u8) -> Self::Reduced::Meta;
 }
 ```
@@ -77,9 +93,8 @@ Introduce the `core::marker::Aligned` marker trait:
 #[unstable(feature = "dyn_type", issue = "999999")]
 #[lang = "aligned"]
 #[rustc_on_unimplemented = "`{Self}` does not have a constant alignment known at compile-time"]
-pub trait Aligned: DynSized {
-    // Empty.
-}
+#[fundamental]
+pub trait Aligned: DynSized {}
 ```
 
 Modify the `core::marker::Sized` marker trait to:
@@ -89,33 +104,30 @@ Modify the `core::marker::Sized` marker trait to:
 #[lang = "sized"]
 #[rustc_on_unimplemented = "`{Self}` does not have a constant size known at compile-time"]
 #[fundamental]
-pub trait Sized: RegularSized + InlineSized {
-    //           ^~~~~~~~~~~~~~~~~~~~~~~~~~ new
-}
+pub trait Sized: Aligned {}
+//               ^~~~~~~ new
 ```
 
-Trying to implement `Object`, `Aligned`, `DynSized` or `Sized` should emit error [E0322].
+Trying to implement `Object`, `Aligned`, `DynSized`, `CustomDst`, or `Sized` should emit error
+[E0322].
 
 > The new trait hierarchy, visualized.
 >
 > ```
->              ┏━━━━━━━━━━┓
->              ┃  Object  ┃
->              ┗━━━━┯━━━━━┛
->            ┏━━━━━━┷━━━━━━━┓
->            ┃ DynamicSized ┃
->            ┗━━━━━━┯━━━━━━━┛
->         ╭─────────┴─────────╮
->         │              ┏━━━━┷━━━━┓
->         │              ┃ Aligned ┃
->         │              ┗━━━━┯━━━━┛
-> ┏━━━━━━━┷━━━━━━┓     ┏━━━━━━┷━━━━━━┓
-> ┃ RegularSized ┃     ┃ InlineSized ┃
-> ┗━━━━━━━┯━━━━━━┛     ┗━━━━━━┯━━━━━━┛
->         ╰─────────┬─────────╯
->              ┏━━━━┷━━━━┓
->              ┃  Sized  ┃
->              ┗━━━━━━━━━┛
+>               ┏━━━━━━━━━━┓
+>               ┃  Object  ┃
+>               ┗━━━━━┯━━━━┛
+>               ┏━━━━━┷━━━━┓
+>               ┃ DynSized ┃
+>               ┗━━━━━┯━━━━┛
+>             ╭───────┴────────╮
+>        ┏━━━━┷━━━━┓     ┏━━━━━┷━━━━━┓
+>        ┃ Aligned ┃     ┃ CustomDst ┃
+>        ┗━━━━┯━━━━┛     ┗━━━━━┯━━━━━┛
+>      ╭──────┴─────╮   ╭──────┴───────╮
+> ┏━━━━┷━━━━┓   ┏━━━┷━━━┷━━━┓   ┏━━━━━━┷━━━━━┓
+> ┃  Sized  ┃   ┃ InlineDst ┃   ┃ RegularDst ┃
+> ┗━━━━━━━━━┛   ┗━━━━━━━━━━━┛   ┗━━━━━━━━━━━━┛
 > ```
 
 Pointers and references `&T` will be represented as `(&(), T::Meta)` in memory.
@@ -129,26 +141,42 @@ fn g<T: Object + ?Sized>();
 fn f<T: ?Sized>() { g::<T>() }
 ```
 
-## Reduction and promotion
+## Core functions
 
-Implement `core::mem::meta` intrinsic as
+Implement `core::mem::meta` function as
 
 ```rust ,ignore
 pub fn meta<T: ?Sized>(val: *const T) -> T::Meta {
     unsafe {
-        let res: (usize, T::Meta) = transmute(val);
+        let res: (*const u8, T::Meta) = transmute(val);
         res.1
     }
 }
 ```
 
-Implement `core::mem::reduce` intrinsic as
+Implement `core::mem::reduce_raw` function as
 
 ```rust ,ignore
-pub fn reduce<T: DynSized + ?Sized>(val: &T) -> &T::Reduced {
-    unsafe {
-        let
-    }
+pub fn reduce_raw<T: CustomDst + ?Sized>(val: *const T) -> *const T::Reduced {
+    let ptr = val as *const u8;
+    let meta = T::reduced_meta(val);
+    unsafe { from_dst_raw_parts(ptr, meta) }
+}
+```
+
+Similarly, provide the following functions:
+
+```rust ,ignore
+pub fn reduce<T: CustomDst + ?Sized>(val: &T) -> &T::Reduced;
+pub fn reduce_mut<T: CustomDst + ?Sized>(val: &mut T) -> &mut T::Reduced;
+pub fn reduce_raw_mut<T: CustomDst + ?Sized>(val: *mut T) -> *mut T::Reduced;
+```
+
+Implement `core::mem::from_dst_raw_parts` function as
+
+```rust ,ignore
+pub unsafe fn from_dst_raw_parts<T: ?Sized>(ptr: *const u8, meta: T::Meta) -> *const T {
+    transmute((ptr, meta));
 }
 ```
 
@@ -163,81 +191,26 @@ pub fn align_of<T: Aligned + ?Sized>() -> usize;
 
 | Type | Align |
 |------|-------|
+| `#[repr(align(n))]` | `n` |
+| `#[repr(packed)]` | 1 |
 | Sized type | (same as before) |
 | Slices `[T]` | `align_of::<T>()` |
 | `str` | 1 |
-| Custom DST | `align_of::<T::Reduced>()` |
+| Trait object `dyn Trait` | *not implemented* |
+| `extern type` | *not implemented* |
+| Custom DST `dyn type` | *see below* |
 
 Also ensure `size_of::<&T>()` returns the size of the tuple `(usize, T::Meta)`.
 
-Implement the `align_of_val` intrinsic as following:
+Modify the `align_of_val` and `size_of_val` functions to simply forward to the `Object` methods (or
+the other way round, whichever is easier to implement).
 
 ```rust ,ignore
-// Pseudo Rust code
-fn align_of_meta<T: ?Sized>(meta: T::Meta) -> usize {
-    if T: Aligned {
-        align_of::<T>()
-    } else if T is dyn trait {
-        meta.align
-    } else {
-        panic!("cannot find alignment of this type")
-    }
-}
 pub fn align_of_val<#[rustc_assume_dyn_sized] T: ?Sized>(val: &T) -> usize {
-    align_of_meta(meta(val))
+    <T as Object>::align_of_meta(meta(val))
 }
-```
-
-Implement the `size_of_val` intrinsic as the following:
-
-```rust ,ignore
-// Pseudo Rust code
 pub fn size_of_val<#[rustc_assume_dyn_sized] T: ?Sized>(val: &T) -> usize {
-    if T: Sized {
-        size_of::<T>()
-    } else if T is [U] {
-        meta(val) * size_of::<U>()
-    } else if T == str {
-        meta(val)
-    } else if T is dyn trait {
-        meta(val).size
-    } else if T is struct || T is tuple {
-        let dst_offset = offset_of_val!(T, dst, val);
-        let dst_size = size_of_val(&val.dst);
-        let align_1 = align_of_val(val) - 1;
-        (dst_offset + dst_size + align_1) & !align_1;
-    } else if T is dyn struct {
-        size_of_val(reduce(val))
-    } else {
-        panic!("cannot find alignment of this type")
-    }
-}
-```
-
-
-
-## Core methods
-
-Introduce the following convenient methods in `core::mem::*` to convert between a combined fat
-pointer and decomposed thin pointer + metadata parts.
-
-```rust ,ignore
-pub fn meta<T: Object + ?Sized>(dst: *const T) -> T::Meta;
-pub fn reduce<T: DynSized + ?Sized>(dst: &T) -> &T::Reduced;
-pub unsafe fn reduce_mut<T: DynSized + ?Sized>(dst: &mut T) -> &mut T::Reduced;
-pub unsafe fn promote_unchecked<T: DynSized + ?Sized>(reduced: &T::Reduced, meta: T::Meta) -> &T;
-pub unsafe fn promote_unchecked_mut<T: DynSized + ?Sized>(reduced: &mut T::Reduced, meta: T::Meta) -> &mut T;
-
-pub unsafe fn from_raw_parts<T: Object + ?Sized>(ptr: *const u8, meta: T::Meta) -> *const T;
-pub unsafe fn from_raw_parts_mut<T: Object + ?Sized>(ptr: *mut u8, meta: T::Meta) -> *mut T;
-
-#[inline]
-pub fn into_raw_parts<T: Object + ?Sized>(fat: *const T) -> (*const u8, T::Meta) {
-    (fat as *const u8, meta(fat))
-}
-#[inline]
-pub fn into_raw_parts_mut<T: Object + ?Sized>(fat: *mut T) -> (*mut u8, T::Meta) {
-    (fat as *mut u8, meta(fat))
+    <T as Object>::size_of_val(val)
 }
 ```
 
@@ -260,6 +233,8 @@ If `T` does not implement `Drop`, depending on the DST family, this function’s
 | Extern type    | false                       |
 | Custom DST     | Same as `needs_drop::<T::Reduced>` |
 
+The `drop_in_place` for custom DST will work by dropping its reduction in place.
+
 ## Unsize
 
 Modify `core::marker::Unsize` trait to:
@@ -277,9 +252,9 @@ Error [E0328] should be removed. Implementing `Unsize` is now allowed.
 Unsize-coercion from `*Src` to `*Dest` would perform the following:
 
 ```rust ,ignore
-let (ptr, src_meta) = mem::into_raw_parts(src);
+let src_meta = mem::meta(src);
 let dest_meta = <Src as Unsize<Dest>>::unsize(src_meta);
-mem::from_raw_parts(ptr, dest_meta)
+unsafe { from_dst_raw_parts(src as *const u8, dest_meta) }
 ```
 
 Ensure the compiler can handle unsize-coercion between two DSTs, not just from sized to unsized.
@@ -295,23 +270,12 @@ implemented for that type.
 ```rust ,ignore
 impl Object for X {
     type Meta = ();
-    fn align_of_meta(_: Self::Meta) -> usize { mem::align_of::<Self>() }
-    delegate_object_impl_to_regular_sized!();
+    fn size_of_val(_: *const Self) -> usize { size_of::<Self>() }
+    fn align_of_meta(_: Self::Meta) -> usize { align_of::<Self>() }
 }
-impl DynSized for X {
-    type Reduced = Self;
-}
-impl RegularSized for X {
-    fn reduce_with_meta(_: ()) {}
-}
-unsafe impl InlineSized for X {
-    fn reduce_with_ptr(_: *const u8) {}
-}
+impl DynSized for X {}
 impl Aligned for X {}
 impl Sized for X {}
-unsafe impl Unsize<X> for X {
-    fn unsize(_: ()) {}
-}
 ```
 
 This section applies to the following types:
@@ -323,36 +287,20 @@ This section applies to the following types:
 * Arrays `[T; n]`
 * Never type `!`
 * Unit tuple `()`
-* Closures and generators.
-* Enums
-* Unions
+* Closures and generators
+* Definitely-sized structs, enums and unions
 
 ## Slices
 
-Implement `Object`, `DynSized`, `RegularSized`, `Aligned` and `Unsize` for slices as shown
-below.
+Implement `Object`, `DynSized`, `Aligned`, and `Unsize` for slices as shown below.
 
 ```rust ,ignore
 impl<T> Object for [T] {
     type Meta = usize;
-    fn align_of_meta(_: Self::Meta) -> usize { mem::align_of::<T>() }
-    delegate_object_impl_to_regular_sized!();
+    fn size_of_val(val: *const Self) -> usize { meta(val) * size_of::<Self>() }
+    fn align_of_meta(_: Self::Meta) -> usize { align_of::<Self>() }
 }
-impl<T> DynSized for [T] {
-    type Reduced = Self;
-}
-unsafe impl<T> RegularSized for [T] {
-    fn size_of_meta(len: usize) -> usize {
-        mem::size_of::<T>() * len
-    }
-    fn compact_size_of_meta(len: usize) -> usize {
-        if len == 0 {
-            0
-        } else {
-            mem::size_of::<T>() * (len - 1) + mem::compact_size_of::<T>()
-        }
-    }
-}
+impl<T> DynSized for [T] {}
 impl<T> Aligned for [T] {}
 
 unsafe impl<T, const n: usize> Unsize<[T]> for [T; n] {
@@ -367,20 +315,18 @@ The same as implemented for `str` as if it is a `[u8]`.
 Introduce a structure to represent the indirect metadata for every trait object.
 
 ```rust ,ignore
-#[doc(hidden)]
 #[repr(C)]
 pub struct TraitMeta<V> {
     destructor: fn(*mut ()),
     size: usize,
     align: usize,
-    compact_size: usize,    // <-- new
     vtable: V,
 }
 ```
 
-Implement `PartialEq`, `Eq`, `PartialOrd`, `Ord` and `Hash` on it using the *pointer value*.
+Implement `PartialEq`, `Eq`, `PartialOrd`, `Ord`, and `Hash` on it using the *pointer value*.
 
-```rust
+```rust ,ignore
 impl<V> PartialEq for TraitMeta<V> {
     fn eq(&self, other: &Self) -> bool {
         self as *const Self == other as *const Self
@@ -401,33 +347,27 @@ struct Trait_Vtable {
 }
 ```
 
-and then automatically implement `Object`, `DynSized` and `RegularSized` for trait objects as
-shown below.
+and then automatically implement `Object` and `DynSized` for trait objects as shown below.
 
 ```rust ,ignore
 impl Object for dyn Trait {
     type Meta = &'static dst::TraitMeta<Trait_Vtable>;
+    fn size_of_val(val: *const Self) -> usize { meta(val).size }
     fn align_of_meta(meta: Self::Meta) -> usize { meta.align }
-    delegate_object_impl_to_regular_sized!();
 }
 impl DynSized for dyn Trait {}
-impl RegularSized for dyn Trait {
-    fn size_of_meta(meta: Self::Meta) -> usize { meta.size }
-    fn compact_size_of_meta(meta: Self::Meta) -> usize { meta.compact_size }
-}
 ```
 
-Whenever an `impl Trait for Type` is spotted (provided `Type` is sized), automatically implement
-`Unsize` as shown below.
+Whenever an `impl Trait for Type<…>` is spotted (provided `Type<…>` is sized), automatically
+implement `Unsize` as shown below.
 
 ```rust ,ignore
-unsafe impl Unsize<dyn Trait> for Type {
+unsafe impl<…> Unsize<dyn Trait> for Type<…> {
     fn unsize(_: ()) -> &'static dst::TraitMeta<Trait_Vtable> {
         &dst::TraitMeta {
             destructor: drop_in_place::<Self> as _,
             size: size_of::<Self>(),
             align: align_of::<Self>(),
-            compact_size: compact_size_of::<Self>(),
             vtable: Trait_Vtable {
                 read: <Self as Trait>::read as _,
                 initializer: <Self as Trait>::initializer as _,
@@ -438,67 +378,41 @@ unsafe impl Unsize<dyn Trait> for Type {
 }
 ```
 
-## Tuples and structs
+## Tuples
 
-Implement `Object` for tuples with ≥2 elements as shown below.
+Forward implementation of `Object`, `DynSized`, `Aligned`, and `Unsize` for tuples as shown below.
 
 ```rust ,ignore
-#[doc(hidden)]
-fn size_of_struct<P, W: ?Sized>(
-    ptr: *const u8,
-    meta: W::Meta,
-    dst_align: usize,
-    total_align: usize,
-) -> usize {
-    let header_size = mem::compact_size_of::<P>();
-    let dst_align_1 = dst_align - 1;
-    let dst_offset = (header_size + dst_align_1) & !dst_align_1;
-    let dst = unsafe { &*mem::from_raw_parts(ptr.add(dst_offset), meta) };
-    let dst_size = dst.size_of_val();
-    let total_align_1 = total_align - 1;
-    (dst_offset + dst_size + total_align_1) & !total_align_1
-}
-
-#[doc(hidden)]
-fn compact_size_of_struct<P, W: ?Sized>(
-    ptr: *const u8,
-    meta: W::Meta,
-    dst_align: usize,
-) -> usize {
-    let header_size = mem::compact_size_of::<P>();
-    let dst_align_1 = dst_align - 1;
-    let dst_offset = (header_size + dst_align_1) & !dst_align_1;
-    let dst = unsafe { &*mem::from_raw_parts(ptr.add(dst_offset), meta) };
-    let dst_compact_size = dst.compact_size_of_val();
-    dst_offset + dst_compact_size
-}
-
 impl<T, U, V, W: ?Sized> Object for (T, U, V, W) {
     type Meta = W::Meta;
+
     fn align_of_meta(meta: Self::Meta) -> usize {
-        cmp::max(mem::align_of::<(T, U, V)>(), W::align_of_meta(meta))
+        max(align_of::<(T, U, V)>(), W::align_of_meta(meta))
     }
-    fn size_of_val(&self) -> usize {
-        let (ptr, meta) = mem::into_raw_parts(self);
-        let dst_align = W::align_of_meta(meta);
-        let total_align = mem::align_of::<(T, U, V)>();
-        size_of_struct::<(T, U, V), W>(ptr, meta, dst_align, total_align)
-    }
-    fn compact_size_of_val(&self) -> usize {
-        let (ptr, meta) = mem::into_raw_parts(self);
-        let dst_align = W::align_of_meta(meta);
-        compact_size_of_struct::<(T, U, V), W>(ptr, meta, dst_align)
+    fn size_of_val(val: *const Self) -> usize {
+        let m = meta(val);
+
+        let offset = size_of::<T>() + size_of::<U>() + size_of::<V>();
+        let dst_align_1 = W::align_of_meta(m) - 1;
+        let offset = (offset + dst_align_1) & !dst_align_1;
+        //^ `(x + y) & !y` rounds `x` up to the next multiple of `y + 1`.
+
+        let dst: *const W = unsafe {
+            let ptr = (val as *const u8).add(offset);
+            from_dst_raw_parts(ptr, m)
+        };
+        //^ this is equivalent to `let dst = &val.3`.
+        let dst_size = W::size_of_val(dst);
+
+        let align_1 = align_of::<(T, U, V)>() - 1;
+        (offset + dst_size + align_1) & !align_1
     }
 }
-```
-
-Forward implementation of `DynSized`, `RegularSized`, `InlineSized`, `Aligned` and `Unsize`.
-
-```rust
-impl<T, U, V, W: ?Sized + DynSized> DynSized for (T, U, V, W) { ... }
-impl<T, U, V, W: ?Sized + RegularSized> RegularSized for (T, U, V, W) { ... }
-impl<T, U, V, W: ?Sized + InlineSized> InlineSized for (T, U, V, W) { ... }
+impl<T, U, V, W: ?Sized + DynSized> DynSized for (T, U, V, W) {}
 impl<T, U, V, W: ?Sized + Aligned> Aligned for (T, U, V, W) {}
+impl<T, U, V, W> Sized for (T, U, V, W) {}
+
+#[unstable(feature = "unsized_tuple_coercion", issue = "42877")]
 unsafe impl<T, U, V, WT: ?Sized, WF: Unsize<WT>> Unsize<(T, U, V, WT)> for (T, U, V, WF) {
     fn unsize(meta: Self::Meta) -> WT::Meta {
         WF::unsize(meta)
@@ -506,20 +420,31 @@ unsafe impl<T, U, V, WT: ?Sized, WF: Unsize<WT>> Unsize<(T, U, V, WT)> for (T, U
 }
 ```
 
-Structures are similar. Forwarding `DynSized`, `RegularSized`, `InlineSized` and `Aligned`
-involves determining the type of the last field. Forwarding `Unsize` has the same condition as
-currently, i.e. `Foo<…, T, …>: Unsize<Foo<…, U, …>>` if
+Note that due to [issue #42877], the last element of a tuple is always considered potentially
+unsized and thus will not be rearranged to the middle of its memory layout. Thus, the above
+implementation of `size_of_val` is correct even when `W` is `Sized`.
+
+## Structs
+
+Structs are similar to tuples in general, but with minor tweaks that ensure the outcome is
+consistent.
+
+If the struct is definitely sized, implement the traits as specified in the
+[Sized types](#sized-types) section. Otherwise, implement the traits similar to the tuple as
+specified above.
+
+Forwarding `Unsize` has the same condition as currently, i.e. `Foo<…, T, …>: Unsize<Foo<…, U, …>>`
+if
 
 * The last field has type `X::Bar<T>` (the `T` can only appear attached to the last path component,
-    i.e. `Bar<T>::X` will cause `Foo` not `Unsize`).
+    e.g. `Bar<T>::X` will cause `Foo` not `Unsize`).
 * `T: Unsize<U>`
 * `Bar<T>: Unsize<Bar<U>>`
 * `T` does not appear in any other fields (not even as `PhantomData<T>`)
 
 We need to consider the effect of `#[repr]` attributes.
 
-* If `#[repr(packed)]` is given, the alignment is always 1. The `Aligned` trait will be always
-    implemented.
+* With `#[repr(packed)]`, the alignment is always 1. The `Aligned` trait will be always implemented.
 
     <details><summary>The <code>Object</code> implementation is changed.</summary>
 
@@ -537,20 +462,28 @@ We need to consider the effect of `#[repr]` attributes.
         fn align_of_meta(_: Self::Meta) -> usize {
             1   // <-- changed
         }
-        fn size_of_val(&self) -> usize {
-            let (ptr, meta) = mem::into_raw_parts(self);
-            size_of_struct::<#[repr(packed)] (T, U, V), W>(ptr, meta, 1, 1)
-        }
-        fn compact_size_of_val(&self) -> usize {
-            let (ptr, meta) = mem::into_raw_parts(self);
-            compact_size_of_struct::<#[repr(packed)] (T, U, V), W>(ptr, meta, 1, 1)
+        fn size_of_val(val: &Self) -> usize {
+            let m = meta(val);
+
+            let offset = size_of::<T>() + size_of::<U>() + size_of::<V>();
+            // no need to align the offset.
+
+            let dst: *const W = unsafe {
+                let ptr = (val as *const u8).add(offset);
+                from_dst_raw_parts(ptr, m)
+            };
+            let dst_size = W::size_of_val(dst);
+
+            offset + dst_size
+            // no need to align the size.
         }
     }
     ```
 
     </details>
 
-* If `#[repr(align(n))]` is given, the alignment is always `n`. The `Aligned` trait will be always
+
+* With `#[repr(align(n))]`, the alignment is always `n`. The `Aligned` trait will be always
     implemented.
 
     <details><summary>The <code>Object</code> implementation is changed.</summary>
@@ -567,25 +500,35 @@ We need to consider the effect of `#[repr]` attributes.
     impl Object for DstStruct {
         type Meta = W::Meta;
         fn align_of_meta(_: Self::Meta) -> usize {
-            n
+            n   // <-- changed
         }
-        fn size_of_val(&self) -> usize {
-            let (ptr, meta) = mem::into_raw_parts(self);
-            let dst_align = W::align_of_meta(meta);
-            size_of_struct::<(T, U, V), W>(ptr, meta, dst_align, n)
-        }
-        fn compact_size_of_val(&self) -> usize {
-            let (ptr, meta) = mem::into_raw_parts(self);
-            let dst_align = W::align_of_meta(meta);
-            compact_size_of_struct::<(T, U, V), W>(ptr, meta, dst_align)
+        fn size_of_val(val: &Self) -> usize {
+            let m = meta(val);
+
+            let offset = size_of::<T>() + size_of::<U>() + size_of::<V>();
+            let dst_align_1 = W::align_of_meta(m) - 1;
+            let offset = (offset + dst_align_1) & !dst_align_1;
+            //^ offset alignment is still needed
+
+            let dst: *const W = unsafe {
+                let ptr = (val as *const u8).add(offset);
+                from_dst_raw_parts(ptr, m)
+            };
+            let dst_size = W::size_of_val(dst);
+
+            let align_1 = n - 1;    // <-- total alignment is set to `n`.
+            (offset + dst_size + align_1) & !align_1
         }
     }
     ```
 
     </details>
 
-* If `#[repr(C)]` is given, `header_size` calculated in `size_of_struct` and
-    `compact_size_of_struct` will use a `#[repr(C)]` tuple, and everything else are unchanged.
+* With `#[repr(C)]`, the `offset` in `size_of_val()` calculation will use the FFI offset, but is
+    otherwise unchanged.
+
+* `#[repr(transparent)]` has no effect on size calculation.
+* `#[repr(simd)]` is prohibited on unsized structs.
 
 ## Foreign types
 
@@ -596,13 +539,12 @@ below.
 impl Object for Opaque {
     type Meta = ();
     fn align_of_meta(_: ()) -> usize {
+        // Exact message is unspecified.
         panic!("Alignment of {} is unknown", intrinsics::type_name::<Self>())
     }
-    fn size_of_val(&self) -> usize {
+    fn size_of_val(_: *const Self) -> usize {
+        // Exact message is unspecified.
         panic!("Size of {} is unknown", intrinsics::type_name::<Self>())
-    }
-    fn compact_size_of_val(&self) -> usize {
-        panic!("Compact size of {} is unknown", intrinsics::type_name::<Self>())
     }
 }
 ```
@@ -612,54 +554,78 @@ impl Object for Opaque {
 Introduce a new syntax to declare a custom DST.
 
 ```rust ,ignore
-dyn type RDst<T>(C; M) where T: Bounds;     // regular DST
-dyn type IDst<T>(C; ..) where T: Bounds;    // inline DST
+dyn type RDst<T>(M) where T: Bounds = C;     // regular DST
+dyn type IDst<T>(..) where T: Bounds = C;    // inline DST
 ```
 
-The type `C` does not need to be `Sized`.
+The type `C` must implement `DynSized` and should not be `Sized`.
 
-The variance of `T` will be the same as the tuple `(C, M)` or `C`.
+The variance of `T` will be the same as the tuple `(C, *mut M)`.
 
-If `C` implements an auto-trait, `RDst`/`IDst` will also implement it (`M`/`S` is not considered).
+If `C` implements an auto-trait, `RDst`/`IDst` will also implement it (`M` is not considered).
 
-When a “regular” `dyn type` item is spotted, automatically implement `Object`, `DynSized` and
-`Aligned` as shown below.
+The `#[repr]` attributes can be applied on custom DSTs.
+
+* With `#[repr(align(n))]`, the `align_of_meta` method will always return `n`, and `Aligned` is
+    always implemented regardless of `C`.
+* With `#[repr(C)]` on an inline DST, the type is FFI-safe. `#[repr(C)]` on regular DST will cause
+    [E0517] error.
+* Everything else (packed, simd, transparent) causes [E0517] error.
+
+### Custom regular DST
+
+When a regular `dyn type` item is spotted, automatically implement `Object`, `DynSized`, `Aligned`
+and `CustomDst` as shown below.
 
 ```rust ,ignore
 impl<T> Object for RDst<T> where T: Bounds {
     type Meta = M;
-    fn align_of_meta(_: M) -> usize { mem::align_of::<C>() }
-    fn size_of_val(&self) -> usize { <Self as RegularSized>::size_of_meta(mem::meta(self)) }
-    fn compact_size_of_val(&self) -> usize { <Self as RegularSized>::compact_size_of_meta(mem::meta(self)) }
+    fn align_of_meta(meta: Self::Meta) -> usize {
+        let meta = <Self as RegularDst>::reduce_with_meta(meta);
+        <Self as CustomDst>::Reduced::align_of_meta(meta)
+    }
+    fn size_of_val(val: *const Self) -> usize {
+        <Self as CustomDst>::Reduced::size_of_val(reduce_raw(val))
+    }
+}
+impl<T> CustomDst for RDst<T> where T: Bounds {
+    type Reduced = C;
+    fn reduced_meta(val: *const Self) -> Self::Reduced::Meta {
+        <Self as RegularDst>::reduce_with_meta(meta(val))
+    }
 }
 impl<T> DynSized for RDst<T> where T: Bounds {}
-impl<T> Aligned for RDst<T> where T: Bounds {}
+impl<T> Aligned for RDst<T> where T: Bounds, C: Aligned {}
 ```
 
-The user is required to implement `RegularSized` for `RDst<T>` themselves.
+The user is required to implement `RegularDst` for `RDst<T>` themselves.
 
-When an “inline” `dyn type` item is spotted, automatically implement `Object`, `DynSized` and
-`Aligned` as shown below.
+### Custom inline DST
+
+When an inline `dyn type` item is spotted, automatically implement `Object`, `DynSized`, `Aligned`
+and `CustomDst` as shown below.
 
 ```rust ,ignore
 impl<T> Object for IDst<T> where T: Bounds {
     type Meta = ();
-    fn align_of_meta(_: ()) -> usize { mem::align_of::<C>() }
-    fn size_of_val(&self) -> usize { <Self as InlineSized>::size_of_ptr(self as *const Self as *const u8) }
-    fn compact_size_of_val(&self) -> usize { <Self as InlineSized>::compact_size_of_ptr(self as *const Self as *const u8) }
+    fn align_of_meta(_: Self::Meta) -> usize {
+        align_of::<C>()
+    }
+    fn size_of_val(val: *const Self) -> usize {
+        <Self as CustomDst>::Reduced::size_of_val(reduce_raw(val))
+    }
+}
+impl<T> CustomDst for RDst<T> where T: Bounds {
+    type Reduced = C;
+    fn reduced_meta(val: *const Self) -> Self::Reduced::Meta {
+        <Self as InlineDst>::reduce_with_ptr(val as *const u8)
+    }
 }
 impl<T> DynSized for IDst<T> where T: Bounds {}
 impl<T> Aligned for IDst<T> where T: Bounds {}
 ```
 
-The user is required to implement `InlineSized` for `IDst<T>` themselves.
-
-Custom DSTs allow certain kinds of `#[repr]`:
-
-* If `#[repr(align(n))]` is given, the alignment will be set to `n` instead of `align_of::<C>()`.
-* If `#[repr(C)]` is given on an “inline” DST, the type is FFI-safe. Otherwise (“regular” DST), emit
-    [E0517] error.
-* Everything else (packed, simd, transparent) causes [E0517] error.
+The user is required to implement `InlineDst` for `IDst<T>` themselves.
 
 ## Placement protocol
 
@@ -685,12 +651,9 @@ pub trait Placer<Data: ?Sized>: Sized {
     fn make_place(self, size: usize, align: usize) -> Self::Place;
 //                      ^~~~~~~~~~~~~~~~~~~~~~~~~ added
 
-    #[deprecated]   // <-- function added to compensate for lack of `typeof`
-    fn make_regular_place(self, meta: Data::Meta) -> Self::Place
-    where
-        Data: RegularSized,
-    {
-        self.make_place(Data::size_of_meta(meta), Data::align_of_meta(meta))
+    #[deprecated]   // <-- function retained to compensate for lack of `typeof`
+    fn make_sized_place(self) -> Self::Place where Data: Sized {
+        self.make_place(mem::size_of::<Data>(), mem::align_of::<Data>())
     }
 }
 
@@ -699,11 +662,8 @@ pub trait BoxPlace<Data: ?Sized>: Place + Sized {
 //                ^~~~~~~~~~~~~~~~~~~~~~~~~ added
 
     #[deprecated]   // <-- function added to compensate for lack of `typeof`
-    fn make_regular_place(meta: Data::Meta) -> Self
-    where
-        Data: RegularSized,
-    {
-        Self::make_place(Data::size_of_meta(meta), Data::align_of_meta(meta))
+    fn make_sized_place(meta: Data::Meta) -> Self where Data: Sized {
+        Self::make_place(mem::size_of::<Data>(), mem::align_of::<Data>())
     }
 }
 
@@ -716,13 +676,13 @@ pub trait Boxed {
 }
 ```
 
-(The `make_regular_place` methods are added to compensate for the lack of `typeof` operator.)
+(The `make_sized_place` methods are added to compensate for the lack of `typeof` operator.)
 
 The lowering of `$placer <- $expr` will be changed to:
 
 ```rust ,ignore
 let placer = $placer;
-let mut place = placer.make_regular_place(());
+let mut place = placer.make_sized_place();
 let ptr = place.pointer();
 unsafe {
     intrinsics::move_val_init(ptr as *mut _, #[safe] { $expr });
@@ -733,7 +693,7 @@ unsafe {
 and the lowering of `box $expr` (if implemented) will be changed to:
 
 ```rust ,ignore
-let mut place = BoxPlace::make_regular_place(());
+let mut place = BoxPlace::make_sized_place();
 let ptr = place.pointer();
 unsafe {
     intrinsics::move_val_init(ptr as *mut _, #[safe] { $expr });
@@ -761,9 +721,9 @@ impl<T: ?Sized> Place for IntermediateBox<T> {
         self.ptr
     }
 }
-unsafe fn finalize<T: Object + ?Sized>(b: IntermediateBox<T>, meta: T::Meta) -> Box<T> {
-//                    ^~~~~~~~~~~~~~~
-    let p = mem::from_raw_parts(b.ptr, meta);
+unsafe fn finalize<T: ?Sized>(b: IntermediateBox<T>, meta: T::Meta) -> Box<T> {
+//                    ^~~~~~
+    let p = mem::from_dst_raw_parts(b.ptr, meta);
     mem::forget(b);
     mem::transmute(p)
 }
@@ -869,7 +829,7 @@ warning: type `Opaque` has no known alignment, and will cause panic at runtime
 The `#[rustc_assume_dyn_sized]` attribute should be applied on the following standard types and
 functions:
 
-* `align_of_val`, `size_of_val`, `compact_size_of_val`
+* `align_of_val`, `size_of_val`
 * `RefCell`
 * `Rc`, `Weak`
 * `Arc`, `Weak`

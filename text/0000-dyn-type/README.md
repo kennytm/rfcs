@@ -26,7 +26,7 @@ We expect many types will benefit from custom DSTs, here are some examples:
 * Multi-dimensional arrays (matrix and tensor libraries).
 * Length-prefixed structures e.g. Pascal strings or C structures with a flexible array member.
 * `CStr`.
-* `OsStr` on Windows (WTF-8 slice or multi-encoded string).
+* Multi-encoded string.
 * Bit array.
 
 [RFC #1524]: https://github.com/rust-lang/rfcs/pull/1524
@@ -59,4 +59,5 @@ We expect many types will benefit from custom DSTs, here are some examples:
 # Unresolved questions
 [unresolved]: #unresolved-questions
 
-* Does `#[may_dangle]` make sense when implementing `Drop` for unsized types?
+* Currently all super-traits of `Sized` (i.e. `Aligned`, `DynSized`, and `Object`) are marked
+    `#[fundamental]`, but it is unclear whether we really need this attribute on them.

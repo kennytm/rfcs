@@ -4,12 +4,17 @@ This section lists the rationales why some minor semantic decisions are made thi
 
 <!-- TOC depthFrom:2 -->
 
+- [Separating `DynSized` and `CustomDst`](#separating-dynsized-and-customdst)
 - [Variance of custom DST](#variance-of-custom-dst)
 - [`DynSized` as a (non-)default bound](#dynsized-as-a-non-default-bound)
 - [Trait safety](#trait-safety)
 - [(Not) Exposing the “Content” type](#not-exposing-the-content-type)
 
 <!-- /TOC -->
+
+## Separating `DynSized` and `CustomDst`
+
+This RFC introduced the `DynSized` trait from
 
 ## Variance of custom DST
 

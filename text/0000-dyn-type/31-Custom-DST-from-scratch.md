@@ -9,18 +9,17 @@ This section provides an in-depth description about how custom DST is designed t
 - [`Object` trait](#object-trait)
 - [Automatically implementing `Object` for every type](#automatically-implementing-object-for-every-type)
 - [Customizing size and alignment](#customizing-size-and-alignment)
-- [Reduction](#reduction)
+- [Reduction and regular/inline DST](#reduction-and-regularinline-dst)
 - [Aliasing](#aliasing)
 - [Unsized enum](#unsized-enum)
 - [Deallocation](#deallocation)
 - [Unsizing](#unsizing)
-- [Regular and inline DST](#regular-and-inline-dst)
 - [Allocation](#allocation)
 - [Stability guarantees: Survey of existing DST usage](#stability-guarantees-survey-of-existing-dst-usage)
 
 <!-- /TOC -->
 
-<!-- spell-checker:ignore japaric’s alloca’ed -->
+<!-- spell-checker:ignore japaric’s alloca’ed noalias -->
 
 ## What do we want to support?
 
@@ -42,36 +41,41 @@ inconsistency. Here we first list all scenarios we want this RFC to achieve.
     * C strings are supposed to be passed to C libraries, and thus our custom DST should consider
         how it works with *FFI*.
 
-3. Support using WTF-8 slice (`OsStr` on Windows) with the `Pattern` 2.0 API (a better [RFC #1309]),
-    i.e. it should be valid to slice a surrogate pair in half.
-
-4. Support changing the `OsStr` representation on Windows as a union of `str` and `[u16]`, while
+3. Support changing the `OsStr` representation on Windows as a union of `str` and `[u16]`, while
     keeping the ability to slice the `OsStr` (inspired by [this discussion thread][i.rlo/6277])
 
-5. Support bit slice (indicated by [this comment][RFC #1524/comment 5527])
+4. Support bit slice (indicated by [this comment][RFC #1524/comment 5527])
 
-6. Support Pascal strings, length-prefixed arrays, and C-style flexible array structures.
+5. Support Pascal strings, length-prefixed arrays, and C-style flexible array structures.
 
-7. Support turning most fat pointers into thin pointers (inspired by
+6. Support turning most fat pointers into thin pointers (inspired by
     [this comment][RFC #1909/comment 1432]).
 
-8. Allow using the same custom DST construct to cover existing DSTs: slices, trait objects and
+7. Allow using the same custom DST construct to cover existing DSTs: slices, trait objects and
     foreign types (`extern type`, [RFC #1861]).
 
     * Be aware that the *alignment* of trait object depends on the metadata value.
     * Be also aware that foreign types has no size or alignment even at runtime.
 
-9. Ensure unsized struct still works with all custom DSTs mentioned above.
+8. Allows a stopgap experimentation for multi-trait objects like `&dyn (Read + Write)` before
+    choosing the actual representation in the language itself.
 
-10. Ensure `&T`, `*const T`, `Box<T>` and `Rc<T>` work properly, if not simpler.
+8. Ensure unsized struct still works with all custom DSTs mentioned above.
 
-11. Ensure existing code taking `T: ?Sized` keep compiling even after introducing custom DSTs.
+9. Ensure `&T`, `*const T`, `Box<T>` and `Rc<T>` work properly, if not simpler.
 
-12. Investigate the possibility of unsized *enum*.
+10. Ensure existing code taking `T: ?Sized` keep compiling even after introducing custom DSTs.
 
-13. Investigate how to *allocate* a custom DST besides unsizing.
+11. Investigate the possibility of unsized *enum*.
+
+12. Investigate how to *allocate* a custom DST besides unsizing.
 
     * For instance, a `Box<CStr>` cannot be constructed through unsizing.
+
+13. Reduce the need of `unsafe` annotations when working with custom DST.
+
+    * This means we restrict the flexibility of custom DSTs so that the compiler can impose safety
+        checks on it.
 
 [i.rlo/6277]: https://internals.rust-lang.org/t/make-std-os-unix-ffi-osstrext-cross-platform/6277
 [RFC #1524/comment 5527]: https://github.com/rust-lang/rfcs/pull/1524#issuecomment-281415527
@@ -85,11 +89,11 @@ expressed as an ordinary DST struct:
 ```rust ,ignore
 struct Mat<T>([T]);
 struct CStr([c_char]);
-struct Wtf8Buf([u8]);
 #[repr(align(2))] struct OsStr([u8]);
 struct BitSlice([u8]);
 struct PArray<T>(usize, [T]);
 struct Thin<T: ?Sized>(T::Meta, T);
+struct ReadWrite(dyn Read);
 ```
 
 What makes custom DST different is just their metadata.
@@ -103,9 +107,9 @@ Our custom DST should provide their custom metadata, and the underlying DST stru
 Therefore we choose our first syntax like this:
 
 ```rust ,ignore
-dyn struct CStr(())([c_char]);
-//              ^~ ^~~~~~~~~~
-//               |  underlying representation
+dyn struct CStr(()) = [c_char];
+//              ^~    ^~~~~~~~
+//               |     underlying representation
 //               |
 //               metadata
 
@@ -115,26 +119,27 @@ struct MatMeta {
     width: usize,
     stride: usize,
 }
-dyn struct Mat<T>(MatMeta) {
-    elements: [T],
-}
+dyn type Mat<T>(MatMeta) = [T];
 
 enum Encoding {
     Utf8,
     Ucs2,
 }
 #[repr(align(2))]
-dyn struct OsStr(Encoding)([u8]);
+dyn type OsStr(Encoding) = [u8];
 
-dyn struct Thin<T: ?Sized>(()) {
+struct ThinRepr<T: ?Sized> {
     header: T::Meta,
     content: T,
 }
+dyn type Thin<T: ?Sized>(()) = ThinRepr<T>;
+
+dyn type ReadWrite((<dyn Read>::Meta, <dyn Write>::Meta)) = dyn Read;
 ```
 
 “`dyn`” is picked because it means dynamic, and will likely be converted to a keyword thanks to
 `dyn Trait` ([RFC #2113]), so we don’t need to introduce another contextual keyword. Adding a
-`struct` makes it spell out “dynamic struct“, as well as preventing potential misinterpretation as a
+`type` makes it spell out “dynamic type, as well as preventing potential misinterpretation as a
 `dyn Trait`.
 
 ## `Object` trait
@@ -142,7 +147,7 @@ dyn struct Thin<T: ?Sized>(()) {
 When manipulating generic DSTs, we often need to use its metadata type. This can be exposed via
 associated type if the DST implements some trait.
 
-```rust
+```rust ,ignore
 trait Object {
     type Meta: Sized;
 }
@@ -199,7 +204,7 @@ thus cannot be exposed to public. Again, `Copy` already eliminated the possibili
 
 ## Automatically implementing `Object` for every type
 
-The `Meta` associated types should be available for sized types. This can be done by making `Object`
+The `Meta` associated type should be available for sized types. This can be done by making `Object`
 special, and be implemented by the compiler like the `Sized` trait.
 
 | Type | Meta |
@@ -214,7 +219,7 @@ special, and be implemented by the compiler like the `Sized` trait.
 
 ## Customizing size and alignment
 
-The size and alignment are arbitrary functions and have to be provided by user.
+The size and alignment of custom DSTs are arbitrary functions and have to be provided by user.
 
 ```rust ,ignore
 trait Object {
@@ -228,32 +233,32 @@ Rust does not support “partial trait implementation”, which means we cannot 
 implement `Object` again.
 
 ```rust ,ignore
-dyn type Slice<T>(T; usize);
+dyn type Slice<T>(usize) = [T];
 // Wrong.
 impl<T> Object for Slice<T> { ... }
 ```
 
-This can be fixed by delegating the actual implementation to a second trait, `DynSized`, and the
+This can be fixed by delegating the actual implementation to a second trait, `CustomDst`, and the
 automatically-implemented `Object` calls methods in this second trait. That means, a custom DST
 declaration will expand to
 
 ```rust ,ignore
-dyn struct Dst(M)(C);
+dyn type Dst(M) = C;
 impl Object for Dst {
     type Meta = M;
     fn size_of_val(&self) -> usize {
-        <Self as DynSized>::size_of_val(self)
+        <Self as CustomDst>::size_of_val(self)
     }
     fn align_of_val(&self) -> usize {
-        <Self as DynSized>::align_of_val(self)
+        <Self as CustomDst>::align_of_val(self)
     }
 }
 ```
 
-and the user will need to implement `DynSized` manually.
+and the user will need to implement `CustomDst` manually.
 
 ```rust ,ignore
-trait DynSized: Object {
+trait CustomDst: Object {
     fn size_of_val(&self) -> usize;
     fn align_of_val(&self) -> usize;
 }
@@ -279,7 +284,7 @@ dependency! Hence, our `align_of_val` should not depend on the pointer part of t
 trait Object {
     type Meta: Copy + Send + Sync + Ord + Hash + 'static;
     fn align_of_meta(meta: Self::Meta) -> usize;
-    fn size_of_val(&self) -> usize;
+    fn size_of_val(val: *const Self) -> usize;
 }
 ```
 
@@ -299,62 +304,97 @@ Both types can be *coerced* into `*S<dyn Debug>`. The type `S<dyn Debug>` itself
 the alignment of field `b`. This can only be obtained via the type information stored in the trait
 object’s metadata.
 
-## Reduction
+## Reduction and regular/inline DST
 
 Recall that every custom DST has a corresponding ordinary DST struct. We want to be able to treat
 every aspect of the custom DST as if the ordinary DST to maintain safety. So what the user should
 provide is not `size_of_val`/`align_of_val`, but a function which produces the original DST which we
-compute the size and alignment from it instead. We could such process **reduction**.
+compute the size and alignment from it instead. We call such process **reduction**.
 
 ```rust ,ignore
 trait Object {
     type Meta: Copy + Send + Sync + Ord + Hash + 'static;
+    fn align_of_meta(meta: Self::Meta) -> usize;
+    fn size_of_val(val: *const Self) -> usize;
+}
+
+trait CustomDst: Object {
     type Reduced: ?Sized;
 }
 
-trait Reduce: Object {
-    fn reduced_meta(&self) -> Self::Reduced::Meta;
+trait CustomDst2: CustomDst {
+    fn reduced_meta(val: *const Self) -> Self::Reduced::Meta;
 }
 ```
 
-When we create a `dyn struct`, the compiler should provide an anonymous “reduced” struct
+When we create a `dyn type`, the compiler should implement `Object` and `CustomDst` automatically:
 
 ```rust ,ignore
-dyn struct Mat<T>(MatMeta)([T]);
+// when you write...
+dyn type Mat<T>(MatMeta) = [T];
 
-#[anonymous]
-struct Foo_Reduced<T>([T]);
-
-impl<T> Object for Foo<T> {
+// ...the compiler implicitly adds the following...
+impl<T> Object for Mat<T> {
     type Meta = MatMeta;
-    type Reduced = Foo_Reduced<T>;
 
     fn align_of_meta(meta: Self::Meta) -> usize { /* to be explored later */ }
-    fn size_of_val(&self) -> usize { reduce(self).size_of_val() }
+    fn size_of_val(val: *const Self) -> usize { reduce(val).size_of_val() }
+}
+
+impl<T> CustomDst for Mat<T> {
+    type Reduced = [T];
 }
 ```
 
 and user just need to provide
 
 ```rust ,ignore
-impl<T> Reduce for Mat<T> {
-    fn reduced_meta(&self) -> usize { // the metadata of [T] is a usize, the length.
-        meta(self).len()
+impl<T> CustomDst2 for Mat<T> {
+    fn reduced_meta(val: *const Self) -> usize { // the metadata of [T] is a usize, the length.
+        meta(val).len()
     }
 }
 ```
 
 The problem here is that we cannot forward `align_of_meta` to `reduced_meta` since we don’t have
-`self` in the first place. This forces us to either make `reduced_meta` take only `Self::Meta`, or
-make `align_of_meta` not rely on reduction. To support thin DSTs like `CStr`, `reduced_meta` must be
-allowed to read the content, which leaves us with the other option.
+`self` in the first place. This forces us to either
 
-This means custom DSTs must have a compile-time alignment. This rules out using trait objects as a
-part of custom DSTs. Hopefully this will be a rare case.
+1. make `reduced_meta` take only `Self::Meta`, or
+2. make `align_of_meta` not rely on reduction i.e. the alignment is known at compile time.
 
-To distinguish between trait objects and other DSTs, we have to introduce a new trait, `Aligned`,
-which marks the type as having a compile-time alignment. This also has a nice side effect of
-relaxing the bounds of `core::mem::align_of`.
+We call the first kind of DST a **regular DST**. This covers slice, trait object, matrix, `OsStr`,
+and bit slice. These types carry a nonzero metadata, and the reduction (and size) can be entirely
+derived from the metadata alone.
+
+```rust ,ignore
+trait RegularDst: CustomDst {
+    fn reduce_with_meta(meta: Self::Meta) -> Self::Reduced::Meta;
+}
+```
+
+The second kind of DST are mainly thin DSTs like `CStr`, Pascal strings and length-prefixed arrays.
+These types has no metadata and thus the pointer is thin and can be used in FFI. The size can only
+be obtained by parsing the memory content itself, and thus we call these **inline DST**, as in the
+metadata are stored “inline”.
+
+```rust ,ignore
+trait InlineDst: CustomDst<Meta = ()> + Aligned {
+    fn reduce_with_ptr(ptr: *const u8) -> Self::Reduced::Meta;
+}
+```
+
+Only trait objects and foreign types have no compile-time alignment. To distinguish between these
+and other DSTs, we’d like to introduce a new trait, `Aligned`, which marks the type as having a
+compile-time alignment. This also has a nice side effect of relaxing the bounds of
+`core::mem::align_of`.
+
+Since we want to distinguish between regular and inline DSTs, and modify the syntax for declaring a
+custom inline DST.
+
+```rust
+dyn type CStr(..) = [c_char];
+//            ^~
+```
 
 ## Aliasing
 
@@ -400,7 +440,7 @@ We wish unsized enums respect unsize coercion, e.g. `E<[u16; 6], [u32; 3]>` can 
 `E<[u16], [u32]>`.
 
 The metadata is going to be any of `T::Meta` or `U::Meta`, depending on which variant is chosen.
-The metadata in one of the three representations:
+The metadata should be one of the three representations:
 
 1. Struct — `struct E::Meta { a: T::Meta, b: U::Meta }`
 2. Union — `union E::Meta { a: T::Meta, b: U::Meta }`
@@ -484,8 +524,8 @@ further ideas.
 ## Unsizing
 
 Unsizing is a kind of coercion between two smart pointers `*T` and `*U` where both interprets the
-memory content in the same way. And thus unsizing from `*T` to `*U` is mainly a way to fabricate a
-correct `U::Meta` value.
+memory content in the same way, and `*U` is more general than `*T`. Unsizing from `*T` to `*U` is
+mainly a way to fabricate a correct `U::Meta` value.
 
 ```rust ,ignore
 impl<T, const n: usize> Unsize<[T]> for [T; n] {
@@ -512,8 +552,8 @@ unsafe impl<T, const width: usize, const height: usize> Unsize<Mat<T>> for [[T; 
 }
 ```
 
-However, it also makes sense to “unsize” an already unsized type, `[[T; m]]` → `Mat<T>`. And thus
-the custom metadata should be an associated function, not an associated constant.
+Furthermore, it also makes sense to “unsize” an already unsized type, `[[T; m]]` → `Mat<T>`. And
+thus the custom metadata should be an associated function, not an associated constant.
 
 ```rust ,ignore
 unsafe impl<T, const width: usize> Unsize<Mat<T>> for [[T; width]] {
@@ -572,48 +612,6 @@ unsafe trait Unsize<Target: ?Sized> {
 ```
 
 Note that most unsizing implementations requires const generics ([RFC #2000]) to make sense.
-
-## Regular and inline DST
-
-Most requirements of custom DSTs fall into two categories:
-
-* **Regular DSTs, or “fat pointers”**
-
-    Examples: slice, trait object, matrix, `OsStr`, bit slice. These types carry a nonzero metadata,
-    and the size can be entirely derived from the metadata alone.
-
-* **Inline DSTs, or “thin pointers”**
-
-    Examples: `CStr`, Pascal strings, length-prefixed arrays. These types has no metadata and thus
-    the pointer is thin and can be used in FFI. The size can only be obtained by parsing the memory
-    content itself.
-
-To make custom DSTs simpler to create by requiring them only to provide the necessary information,
-we restrict the kinds of DSTs to these two.
-
-```rust
-trait RegularSized: DynSized {
-    fn reduce_with_meta(meta: Self::Meta) -> Self::Reduced::Meta;
-}
-
-trait InlineSized: DynSized<Meta = ()> + Aligned {
-    fn reduce_with_ptr(ptr: *const u8) -> Self::Reduced::Meta;
-}
-```
-
-Since the customization of DSTs are now distributed into these two traits, the `DynSized` trait can
-now be changed to a simple marker trait.
-
-```rust
-trait DynSized: Object {}
-```
-
-We also modify the syntax for declaring a custom inline DST.
-
-```rust
-dyn struct CStr(..)([c_char]);
-//              ^~
-```
 
 ## Allocation
 
@@ -1128,18 +1126,19 @@ Now some usages which will be negatively affected by custom DST.
 These are affected all because `size_of_val` or `align_of_val` of an `extern type` is invalid. Due
 to Rust’s stability guarantee, using `Spawn<ExternType>` should continue to compile, even if it may
 panic at runtime. The compiler can issue a lint at monomorphization time, if `size_of_val`,
-`align_of_val` or an unsized struct is instantiated with an extern type (or `T: !DynSized` in
-general), it should issue a forward-compatibility lint.
+`align_of_val` or an unsized struct is instantiated with an extern type, it should issue a
+forward-compatibility lint.
 
-When `DynSized` trait was introduced in [RFC #1993], it was expected to be a “default bound” similar
-to `Sized`, which needs to be explicitly opt-out via `?DynSized`. The `?Trait` feature was
-considered confusing, and causing pressure and churn to package authors to generalization every
-`?Sized` to `?DynSized` ([RFC issue #2255]), and thus the first implementation of `DynSized`
-([PR #46108]) was eventually postponed.
+[RFC #1993] introduced the `DynSized` trait which is implemented for all types except `extern type`.
+This includes custom DSTs for sure. It was expected to be a “default bound” similar to `Sized`,
+which needs to be explicitly opt-out via `?DynSized`. The `?Trait` feature was considered confusing,
+and causing pressure and churn to package authors to generalization every `?Sized` to `?DynSized`
+([RFC issue #2255]), and thus the first implementation of `DynSized` ([PR #46108]) was eventually
+postponed.
 
-This RFC introduces not just `DynSized`, but also `Aligned` and `RegularSized`, all of which
-will be implied by the `Sized` bound. Should we make them default bounds as well? We suggest **no**,
-where `?Sized` is repurposed to mean opt-out of *all* bounds.
+This RFC introduces not just `DynSized`, but also `Aligned`, both of which will be implied by the
+`Sized` bound. Should we make them default bounds as well? We suggest **no**, where `?Sized` is
+repurposed to mean opt-out of *all* bounds related to sizing.
 
 As we can see from the above statistics, in the 49 packages using DST features, only 12 packages
 really assume `DynSized`, and out of which, 5 packages uses `Box<T>`/`Rc<T>`/`Arc<T>` simply for
