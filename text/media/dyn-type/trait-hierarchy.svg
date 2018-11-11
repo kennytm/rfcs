@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg baseProfile="tiny" preserveAspectRatio="none" version="1.1" viewBox="0 0 312.81 156.91" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<marker id="a" overflow="visible" markerUnits="userSpaceOnUse" orient="auto">
+<path d="m0 0 7.5175-2.7362v5.4723z" stroke="#000" stroke-linecap="square" stroke-miterlimit="10" stroke-width=".25"/>
+</marker>
+</defs>
+<g stroke="#000" stroke-linecap="square" stroke-miterlimit="10" font-family="Arial" font-size="12">
+<rect x="113.89" y=".5" width="85.039" height="28.346" fill="#F7FFBF"/>
+<text x="135.555902436" y="17.976939284" stroke="none">Pointee</text>
+<rect x="113.89" y="43.02" width="85.039" height="28.346" fill="#F7FFBF" stroke-dasharray="4,4"/>
+<text x="130.226800874" y="60.4966243233" stroke="none">DynSized</text>
+<rect x="57.193" y="85.539" width="85.039" height="28.346" fill="#FFEFBF"/>
+<text x="67.1999031127" y="103.016309363" stroke="none">dst::Derived</text>
+<rect x=".5" y="128.06" width="85.039" height="28.346" fill="#FFEFBF"/>
+<text x="10.1700756644" y="145.535994402" stroke="none">dst::Regular</text>
+<rect x="113.89" y="128.06" width="85.039" height="28.346" fill="#FFEFBF"/>
+<text x="130.223871186" y="145.535994402" stroke="none">dst::Inline</text>
+<rect x="227.27" y="128.06" width="85.039" height="28.346" fill="#F7FFBF"/>
+<text x="254.28254952" y="145.535994402" stroke="none">Sized</text>
+<rect x="170.58" y="85.539" width="85.039" height="28.346" fill="#F7FFBF"/>
+<text x="192.582800197" y="103.016309363" stroke="none">Aligned</text>
+<line x1="128.06" x2="128.06" y1="71.366" y2="85.539" fill="#F7FFBF" marker-start="url(#a)"/>
+<line x1="128.06" x2="128.06" y1="28.846" y2="43.02" fill="#F7FFBF" marker-start="url(#a)"/>
+<line x1="184.75" x2="184.75" y1="28.846" y2="43.02" fill="#F7FFBF" marker-start="url(#a)"/>
+<line x1="184.75" x2="184.75" y1="71.366" y2="85.539" fill="#F7FFBF" marker-start="url(#a)"/>
+<line x1="71.366" x2="71.366" y1="113.89" y2="128.06" fill="#FFEFBF" marker-start="url(#a)"/>
+<line x1="128.06" x2="128.06" y1="113.89" y2="128.06" fill="#FFEFBF" marker-start="url(#a)"/>
+<line x1="184.75" x2="184.75" y1="113.89" y2="128.06" fill="#F7FFBF" marker-start="url(#a)"/>
+<line x1="241.44" x2="241.44" y1="113.89" y2="128.06" fill="#F7FFBF" marker-start="url(#a)"/>
+</g>
+</svg>

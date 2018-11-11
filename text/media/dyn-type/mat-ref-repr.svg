@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg baseProfile="tiny" preserveAspectRatio="none" version="1.1" viewBox="0 0 341.16 142.94" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<marker id="b" overflow="visible" markerUnits="userSpaceOnUse" orient="auto">
+<path d="m0 0-7.5175 2.7362v-5.4723z" stroke="#000" stroke-linecap="square" stroke-miterlimit="10" stroke-width=".25"/>
+</marker>
+<marker id="a" overflow="visible" markerUnits="userSpaceOnUse" orient="auto">
+<path d="m2.8284-2.8284c1.5621 1.5621 1.5621 4.0948 0 5.6569s-4.0948 1.5621-5.6569 0-1.5621-4.0948 0-5.6569 4.0948-1.5621 5.6569 0" stroke="#000" stroke-linecap="square" stroke-miterlimit="10" stroke-width=".25"/>
+</marker>
+<linearGradient id="c">
+<stop offset="0%" stop-color="#DFFFBF"/>
+<stop offset="100%" stop-color="rgba(223,255,191,0)"/>
+</linearGradient>
+</defs>
+<g stroke="#000" stroke-linecap="square" stroke-miterlimit="10" font-family="Arial" font-size="12">
+<rect x=".5" y=".5" width="226.77" height="14.173" fill="none" stroke="none"/>
+<text x="88.7090689592" y="11" stroke="none">&amp;Mat&lt;T&gt;</text>
+<rect x=".5" y="57.193" width="56.693" height="28.346" fill="#FFD7BF"/>
+<rect x="57.193" y="57.193" width="56.693" height="28.346" fill="#DFFFBF"/>
+<text x="71.0325341412" y="74.6698526698" stroke="none">width</text>
+<rect x="113.89" y="57.193" width="56.693" height="28.346" fill="#DFFFBF"/>
+<text x="125.384627215" y="74.6698526698" stroke="none">height</text>
+<rect x="170.58" y="57.193" width="56.693" height="28.346" fill="#DFFFBF"/>
+<text x="183.75332185" y="74.6698526698" stroke="none">stride</text>
+<polyline points="340.66 113.89 85.539 113.89 85.539 142.23 340.66 142.23" fill="url(#c)"/>
+<line x1="28.846" x2="85.539" y1="128.06" y2="128.06" fill="none" marker-end="url(#b)"/>
+<line x1="28.846" x2="28.846" y1="71.366" y2="128.06" fill="none" marker-start="url(#a)"/>
+<path d="m57.193 54.041v-2.8514c0-2.4808 2.4808-2.4808 2.4808-2.4808h76.87s5.6886 0 5.6886-5.6886c0 5.6886 5.6886 5.6886 5.6886 5.6886h76.87s2.4808 0 2.4808 2.4808v2.8514" fill="none"/>
+<path d="m0.5 28.846v-3.6671c0-3.1904 3.1904-3.1904 3.1904-3.1904h102.88s7.3158 0 7.3158-7.3158c0 7.3158 7.3158 7.3158 7.3158 7.3158h102.88s3.1904 0 3.1904 3.1904v3.6671" fill="none"/>
+<text x="93.2068928399" y="39.8464566929" stroke="none">Mat&lt;T&gt;::Metadata</text>
+<text x="76.3661417323" y="107.712598425" font-size="9" font-style="italic" stroke="none">(length determined by width, height and stride)</text>
+<rect x="85.539" y="113.89" width="42.52" height="28.346" fill="none"/>
+<text x="102.634173536" y="131.362766056" stroke="none">T</text>
+<rect x="128.06" y="113.89" width="42.52" height="28.346" fill="none"/>
+<text x="145.153858575" y="131.362766056" stroke="none">T</text>
+<rect x="170.58" y="113.89" width="42.52" height="28.346" fill="none"/>
+<text x="187.673543615" y="131.362766056" stroke="none">T</text>
+<rect x="213.1" y="113.89" width="42.52" height="28.346" fill="none"/>
+<text x="230.193228654" y="131.362766056" stroke="none">T</text>
+<rect x="255.62" y="113.89" width="42.52" height="28.346" fill="none"/>
+<text x="272.712913693" y="131.362766056" stroke="none">T</text>
+<rect x="298.14" y="113.89" width="42.52" height="28.346" fill="none" stroke="none"/>
+<text x="315.232598733" y="131.362766056" stroke="none">T</text>
+</g>
+</svg>
