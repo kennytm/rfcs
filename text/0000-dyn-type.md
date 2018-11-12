@@ -1248,7 +1248,7 @@ let dest_meta = <Src as Unsize<Dest>>::unsize(src_meta);
 unsafe { <*const Dest>::from_raw_parts(src as *const (), dest_meta) }
 ```
 
-Ensure the compiler can handle unsize-coercion between two DSTs, not just from sized to unsized.
+Ensure that the compiler can handle unsize-coercion between two DSTs, not just from sized to unsized.
 
 To avoid infinite reduction, unsize-coercion should never be applied more than once in the whole coercion chain.
 
