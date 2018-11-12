@@ -86,6 +86,7 @@ impl CStr {
     - [Details](#details)
         - [What do we want to support?](#what-do-we-want-to-support)
         - [Choosing the syntax](#choosing-the-syntax)
+        - [The `Pointee` trait](#the-pointee-trait)
         - [Customizing size and alignment](#customizing-size-and-alignment)
         - [Reduction and regular/inline DST](#reduction-and-regularinline-dst)
         - [Aliasing](#aliasing)
@@ -101,6 +102,7 @@ impl CStr {
     - [Rationales](#rationales)
         - [Variance of custom DST](#variance-of-custom-dst)
         - [Safety](#safety)
+        - [Fundamental traits](#fundamental-traits)
     - [Alternatives](#alternatives)
         - [Generalizing indexing](#generalizing-indexing)
         - [Pointer family](#pointer-family)
@@ -120,6 +122,7 @@ impl CStr {
     - [Safe construction](#safe-construction)
 - [Future possibilities](#future-possibilities)
     - [`DynSized`](#dynsized)
+    - [`#[derive]`](#derive)
     - [`#[repr]` as a constraint](#repr-as-a-constraint)
         - [Aligned foreign type](#aligned-foreign-type)
     - [Copy initialization](#copy-initialization)
@@ -201,7 +204,7 @@ struct MatrixData<T> {
 }
 ```
 
-This, however, has a problem that cannot be sub-sliced,
+However, this matrix cannot be sliced into smaller sub-matrices,
 because `Index` requires you to return a reference without allocation!
 
 ```rust ,ignore
@@ -933,6 +936,11 @@ pub trait Regular: Derived {
 }
 ```
 
+`const fn` was part of [RFC #2237] which was retracted for a more general solution.
+We require `const fn` to ensure the function is pure (same input leads to same output).
+If `const fn` in a trait is not supported, make the trait `unsafe` instead
+(as in, “we give up proving its purity in the type system”).
+
 Introduce the `core::dst::Inline` trait:
 
 ```rust ,ignore
@@ -1011,6 +1019,7 @@ pub unsafe fn reduce_ptr_unchecked<T: Derived + ?Sized>(val: *const T) -> *const
     let meta = T::reduce_metadata(val);
     Self::from_raw_parts(ptr, meta)
 }
+// The rest are all implemented similarly.
 pub unsafe fn reduce_mut_ptr_unchecked<T: Derived + ?Sized>(val: *mut T) -> *mut Self::Reduced { ... }
 pub unsafe fn reduce_non_null_unchecked<T: Derived + ?Sized>(val: NonNull<T>) -> NonNull<Self::Reduced> { ... }
 pub unsafe fn reduce_unchecked<T: Derived + ?Sized>(val: &T) -> &Self::Reduced { ... }
@@ -1020,6 +1029,7 @@ pub unsafe fn reduce_mut_unchecked<T: Derived + ?Sized>(val: &mut T) -> &mut Sel
 pub fn reduce_ptr<T: Regular + ?Sized>(val: *const T) -> *const Self::Reduced {
     unsafe { reduce_ptr_unchecked(val) }
 }
+// The rest are all implemented similarly.
 pub fn reduce_mut_ptr<T: Regular + ?Sized>(val: *mut T) -> *mut Self::Reduced { ... }
 pub fn reduce_non_null<T: Regular + ?Sized>(val: NonNull<T>) -> NonNull<Self::Reduced> { ... }
 pub fn reduce<T: Regular + ?Sized>(val: &T) -> &Self::Reduced { ... }
@@ -1144,7 +1154,8 @@ The `#[repr]` attributes can be applied on custom DSTs.
     and `Aligned` is always implemented regardless of `Self::Reduced`.
 * With `#[repr(C)]` on an inline DST, the type is FFI-safe.
     `#[repr(C)]` on regular DST will cause error [E0517] *“attribute should be applied to struct, enum or union”*.
-* Everything else (packed, simd, transparent) causes [E0517] error.
+* `#[repr(transparent)]` has no effect (it is already transparent), it should either be ignored or cause [E0517] error.
+* Everything else (packed, simd) causes [E0517] error.
 
 [E0517]: https://doc.rust-lang.org/error-index.html#E0517
 
@@ -1342,6 +1353,67 @@ and recently becomes a keyword thanks to `dyn Trait` ([RFC #2113]),
 so we don’t need to introduce another unconstrained contextual keyword.
 Adding a `type` makes it spell out “dynamic type”, as well as preventing potential misinterpretation as a `dyn Trait`.
 
+### The `Pointee` trait
+
+When manipulating generic DSTs, we often need to use its metadata type.
+This can be exposed via associated type if the DST implements some trait.
+
+```rust ,ignore
+type Pointee {
+    type Metadata: Sized;
+}
+```
+
+That is, every type `&Dst` will be represented as the tuple `(&Something, Dst::Meta)` in memory.
+
+We need to ensure all existing traits implemented for pointers and references (`&T`, `*T`, `Box<T>` etc)
+are not affected by custom DST. This imposes many restrictions on `Meta`:
+
+* `Copy` — `&T` and `*T` are both `Copy`
+* `Send` — `&T` is `Send` as long as `T` is `Sync`, without considering `T::Meta`.
+* `Sync` — `&T` is `Sync` as long as `T` is `Sync`, without considering `T::Meta`.
+* `Ord` — `*T` is ordered by the pointer value + metadata together. Demonstration:
+
+    ```rust
+    let a: &[u8] = &[1, 2, 3];
+    let b: &[u8] = &a[..2];
+    let a_ptr: *const [u8] = a;
+    let b_ptr: *const [u8] = b;
+    // the thin-pointer part are equal...
+    assert_eq!(a_ptr as *const u8, b_ptr as *const u8);
+    // but together with the metadata, they are different.
+    assert!(a_ptr > b_ptr);
+    ```
+
+* `Hash` — `*T` hashes the pointer value + metadata together.
+* `Unpin` — `&T` is always `Unpin` (`Copy` does not imply `Unpin`).
+* `'static` — `*T` should outlive `T`, thus `T::Meta` should outlive `T`. There is no `'self`
+    lifetime, nor it makes sense to complicate the matters by making `Meta` a GAT, thus the
+    `'static` bound.
+
+Thus, the final constraint would be:
+
+```rust ,ignore
+trait Pointee {
+    type Metadata: Sized + Copy + Send + Sync + Ord + Hash + Unpin + 'static;
+}
+```
+
+In principle `Metadata` should be further bound by `UnwindSafe` and `RefUnwindSafe`,
+but these traits are defined in libstd instead of libcore, so they cannot be included in the bound.
+One may need to explicitly opt-out of `RefUnwindSafe` according to the metadata type.
+
+```rust ,ignore
+impl<T: ?Sized> !RefUnwindSafe for T {}
+impl<T: ?Sized> RefUnwindSafe for T where T::Metadata: UnwindSafe {}
+```
+
+Fortunately, `RefUnwindSafe` is only excluded for `UnsafeCell<T>`, and `UnwindSafe` is only excluded for `&mut T`,
+both of which are handled by the `Copy` bound already.
+
+The `Metadata` type should also be bound by `Freeze` (i.e. cell-free), but `Freeze` is a private trait,
+thus cannot be exposed to public. Again, `Copy` already eliminated the possibility of having cells.
+
 ### Customizing size and alignment
 
 In the most flexible sense, the size and alignment of custom DSTs are arbitrary functions and will be provided by user.
@@ -1400,6 +1472,8 @@ We want to be able to treat every aspect of the a DST as if the ordinary DST to 
 So what the user should provide is not `size_of_val`/`align_of_meta`,
 but a function which produces the original DST which we compute the size and alignment from it instead.
 We call such process *reduction*, and the custom DST is *derived* from that ordinary DST.
+
+(In this RFC “reduction” always means DST reduction, not related concepts like β-reduction in lambda calculus)
 
 ```rust ,ignore
 unsafe trait Derived {
@@ -1480,7 +1554,9 @@ The stride can be larger than the width when the rectangular slice does not incl
 In the linear representation as a `[T]`, it will contain `[2, 3, 4, 5, 6, 7, 8]`.
 Note that the irrelevant entries `4, 5, 6` are included.
 This means providing mutable access to the reduced type is unsafe.
-Ideally we should represent this memory as `∃w,h,s: [([T; w], [Opaque<T>; s-w]); h]`,
+Ideally we the reduced type should be represented as
+`dyn<const width: usize, const height: usize, const stride: usize> [([T; width], [Opaque<T>; stride-width]); height]`
+instead of `dyn<const len: usize> [T; len]`,
 but encoding this thing in the type system is just as error-prone as writing actual checking code,
 and thus we decided against doing this.
 
@@ -1738,6 +1814,29 @@ impl dst::Regular for Shapeshifter {
 However, `const` method relies on [RFC #2237], which was closed in favor of a more ambitious effect-system RFC.
 If `const` method is not available, we have no choice but to have `dst::Regular` an `unsafe` trait,
 requiring implementation to prove that the function is indeed pure.
+
+### Fundamental traits
+
+In this RFC, the traits `Pointee`, `Aligned` and `Sized` are marked `#[fundamental]`.
+This attribute was introduced in [RFC #1023] “Rebalancing coherence”
+(the later [RFC #2451] “Re-Rebalancing Coherence” does not changes its definition either):
+
+> A `#[fundamental]` trait `Foo` is one where adding an impl of Foo for an existing type is a breaking change.
+> For now, the `Fn` traits and `Sized` would be marked fundamental,
+> though we may want to extend this set to all operators or some other more-easily-remembered set.
+
+This basically allows the compiler to assert that if a type does not implement `Aligned`,
+it will forever have no compile-time alignment, and thus allow code like below to pass coherence check:
+
+```rust ,ignore
+impl<T: Aligned + ?Sized> OptAlignOf for T { ... }
+impl OptAlignOf for dyn Trait { ... }
+```
+
+Since `Pointee` is always implemented there’s really no reason to add `#[fundamental]` to it.
+We include it just to make all super-traits of `Sized` share the attribute.
+
+It is fine if we keep the `#[fundamental]` set unchanged though, it is not a fundamental blocker.
 
 ## Alternatives
 
@@ -2013,6 +2112,25 @@ dyn(regular: M) type Dst<T> where T: Bounds = C;
 dyn(inline) type Dst<T> where T: Bounds = C;
 ```
 
+We could even turn them into an attribute, though this would be the first time an attribute depends on generics.
+
+```rust ,ignore
+#[dyn_repr(regular = M)]
+dyn type Dst<T> where T: Bounds = C;
+
+#[dyn_repr(inline)]
+dyn type Dst<T> where T: Bounds = C;
+```
+
+The keyword `type` may make reader confuse this as a type alias instead of an entire new type.
+We may use the keyword `struct` instead
+
+```rust ,ignore
+dyn struct Dst<T>(regular: M) where T: Bounds = C;
+// or even more struct-like
+dyn struct Dst<T>[regular: M](C) where T: Bounds;
+```
+
 # Prior art
 [prior-art]: #prior-art
 
@@ -2090,6 +2208,8 @@ We do not know if there is a simple solution to reduce the unsafe surface to cre
 This RFC does not mandate the `DynSized` trait, as we are not implementing `size_of_val` of a custom DST directly,
 but delegate through its reduced type. Therefore `DynSized` is out-of-scope of this RFC.
 
+A separate `DynSized` RFC proposal can be found in [RFC #2310], which is postponed until a Custom DST proposal needs it.
+
 If we do have `DynSized` *before* custom DST is stabilized, there are several choices we could make:
 
 * Make `DynSized` a super-trait of `dst::Derived`,
@@ -2099,6 +2219,47 @@ If we do have `DynSized` *before* custom DST is stabilized, there are several ch
 Since the content of an extern type is completely opaque,
 we do not expect it is useful to reduce a custom DST to an extern type.
 Therefore, we recommend making `DynSized` a requirement of custom DST to provide more guarantees.
+
+## `#[derive]`
+
+If we allow `#[derive]` on custom DSTs, the following built-in traits should be supported:
+
+* Hash
+* PartialEq
+* Eq
+* PartialOrd
+* Ord
+* Debug
+
+While the following should produce an error since these traits have methods returning Self by value:
+
+* Clone
+* Copy
+* Default
+
+We do not care about the deprecated `RustcEncodable` and `RustcDecodable`.
+
+Proc-macro derives like `#[derive(Serialize)]` works by sending the item’s token tree to the proc-macro as usual.
+
+This RFC does not mandate how `#[derive]` works since the derived implementation may not be the one we want.
+For instance, if we derive `Hash` as
+
+```rust
+#[derive(Hash)]
+dyn type Dst(regular: M) = C;
+
+// implies:
+
+impl Hash for Dst {
+    fn hash<H: Hasher>(&self, hasher: &mut H) {
+        metadata(self).hash(hasher);
+        reduce(self).hash(hasher);
+    }
+}
+```
+
+then for a matrix `Mat<T>` the irrelevant entries between two rows will also be included,
+leading to invalid hash result.
 
 ## `#[repr]` as a constraint
 
@@ -2147,7 +2308,7 @@ where
 ```
 
 but the compiler will need to reverse engineer the expression to know that the alignment is a constant,
-in order to implement `Aligned` for `dyn X`.
+to implement `Aligned` for `dyn X`.
 
 ### Aligned foreign type
 
@@ -2235,6 +2396,8 @@ impl<'a, T: CopyInit + ?Sized + 'a> From<&'a T> for Box<T> {
 [RFC issue #813]: https://github.com/rust-lang/rfcs/issues/813
 <!-- Extending deref/index with ownership transfer: DerefMove, IndexMove, IndexSet -->
 [RFC issue #997]: https://github.com/rust-lang/rfcs/issues/997
+<!-- Rebalancing coherence -->
+[RFC #1023]: https://github.com/rust-lang/rfcs/pull/1023
 <!-- Custom Dynamically Sized Types for Rust -->
 [RFC #1524]: https://github.com/rust-lang/rfcs/pull/1524
 <!-- extern types -->
@@ -2253,6 +2416,8 @@ impl<'a, T: CopyInit + ?Sized + 'a> From<&'a T> for Box<T> {
 [RFC #2237]: https://github.com/rust-lang/rfcs/pull/2237
 <!-- RFC: DynSized without ?DynSized — Lint against use of `extern type` in `size_of_val`, and more -->
 [RFC #2310]: https://github.com/rust-lang/rfcs/pull/2310
+<!-- Re-Rebalancing Coherence -->
+[RFC #2451]: https://github.com/rust-lang/rfcs/pull/2451
 <!-- RFC: Pointer metadata & VTable -->
 [RFC #2580]: https://github.com/rust-lang/rfcs/pull/2580
 <!-- RFC: Custom DSTs -->
