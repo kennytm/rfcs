@@ -218,7 +218,7 @@ impl<T> Index<(Range<usize>, Range<usize>)> for MatrixData<T> {
 }
 ```
 
-The correct way is to make the width, height and stride metadata themselves, placed outside of the elements array:
+The correct way is to make the width, height, and stride metadata themselves, placed outside of the elements array:
 
 ```rust ,ignore
 #[derive(Copy, Clone)]
