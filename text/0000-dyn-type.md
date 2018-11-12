@@ -135,7 +135,7 @@ As of Rust 1.31, we only have 4 families of DSTs:
 slices (`[T]` and `str`), trait objects (`dyn Trait`), extern types and structs/tuples with a DST tail.
 However this is not enough, e.g. we cannot easily define a length-prefix array or a 2D matrix slice with this.
 And recently this even leads to attempt trying to stabilize extern types with questionable semantics
-(e.g. fixing the alignment to be 1 even if it is completely opaque) in order to make custom DSTs possible.
+(e.g. fixing the alignment to be 1 even if it is completely opaque) to make custom DSTs possible.
 This RFC is submitted to providing a proper way to define a true custom DST,
 such that the internals can be safely defined.
 
