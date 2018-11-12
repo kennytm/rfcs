@@ -1366,7 +1366,7 @@ let s: &S<Dst> = ...;
 let t: &Dst = &s.b;
 ```
 
-In order to get the address `&s.b`, we first need to find out the offset of `b` in `S<Dst>`.
+To get the address `&s.b`, we first need to find out the offset of `b` in `S<Dst>`.
 This requires knowing the alignment of `Dst`, which is `align_of_val(&s.b)`, and that leads to a circular dependency!
 Hence, our `align_of_val` should not depend on the pointer part of the reference at all.
 
