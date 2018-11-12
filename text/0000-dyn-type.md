@@ -1482,7 +1482,7 @@ Note that the irrelevant entries `4, 5, 6` are included.
 This means providing mutable access to the reduced type is unsafe.
 Ideally we should represent this memory as `∃w,h,s: [([T; w], [Opaque<T>; s-w]); h]`,
 but encoding this thing in the type system is just as error-prone as writing actual checking code,
-and thus decided against doing this.
+and thus we decided against doing this.
 
 This also means even if we have two `&mut Mat<T>`, their memory may be physically overlapping,
 although they are still logically disjoint.
