@@ -1435,7 +1435,7 @@ trait Regular: Derived {
 ```
 
 The second kind of DST are mainly thin DSTs like `CStr`, Pascal strings and length-prefixed arrays.
-These types has no metadata and thus the pointer is thin and can be used in FFI.
+These types have no metadata and thus the pointer is thin and can be used in FFI.
 The size can only be obtained by parsing the memory content itself, and thus we call these *inline DST*,
 as in the metadata are stored “inline”.
 
