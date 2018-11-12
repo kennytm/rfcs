@@ -279,7 +279,7 @@ impl<T> std::dst::Regular for Mat<T> {
 
 ### Using the DST
 
-The metadata of our DST contains essential information how to retrieve the elements.
+The metadata of our DST contains essential information on how to retrieve the elements.
 It should be easily retrievable from a `&Mat<T>`. Some convenient functions can be found in `std::ptr` module,
 e.g. we could extract the metadata via `std::ptr::metadata`:
 
