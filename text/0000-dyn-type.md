@@ -436,7 +436,7 @@ We could clone a `&Mat<T>` to a boxed `Box<Mat<T>>` by
 
 1. Reducing the matrix to a slice
 2. Boxing the slice
-3. Extracts the raw pointers, and replace the slice metadata by the matrix’s.
+3. Extracting the raw pointers, and replacing the slice metadata by the matrix’s.
 4. Transmute the raw pointers back into a box.
 
 ```rust ,ignore
