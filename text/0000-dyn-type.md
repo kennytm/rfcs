@@ -1171,7 +1171,7 @@ pub fn align_of<T: Aligned + ?Sized>() -> usize;
 | DST structs/tuples | max of all fields, if all of them are aligned |
 | Custom DST | `align_of::<Self::Reduced>()`, if the reduced type is aligned |
 
-Ensure `size_of::<&T>()` returns the size of the tuple `(usize, T::Metadata)`.
+Ensure that `size_of::<&T>()` returns the size of the tuple `(usize, T::Metadata)`.
 
 The `size_of_val` and `align_of_val` of a custom DST is equal to its reduction.
 
