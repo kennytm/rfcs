@@ -324,7 +324,7 @@ let slice: &[u32] = array;  // <-- coercion: `&[u32; 4]` becomes `&[u32]`!
 ```
 
 This makes constructing a new DST much easier! Unsize coercion works by transforming the metadata
-value (here, from `()` to `4`), and reinterpret the pointed memory as the target type.
+value (here, from `()` to `4`), and reinterpreting the pointed memory as the target type.
 
 We could write these rules for our custom DSTs as well, through the `std::marker::Unsize` trait:
 
