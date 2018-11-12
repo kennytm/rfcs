@@ -1120,7 +1120,7 @@ where
 }
 ```
 
-Users are expected to `core::dst::Regular` and `core::dst::Inline` themselves.
+Users are expected to implement `core::dst::Regular` and `core::dst::Inline` themselves.
 Failing to do so should result in the normal [E0277] *“the trait bound is not satisfied”* error at the declaration site.
 
 ```
