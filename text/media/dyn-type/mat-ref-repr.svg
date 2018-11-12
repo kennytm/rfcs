@@ -28,7 +28,7 @@
 <path d="m57.193 54.041v-2.8514c0-2.4808 2.4808-2.4808 2.4808-2.4808h76.87s5.6886 0 5.6886-5.6886c0 5.6886 5.6886 5.6886 5.6886 5.6886h76.87s2.4808 0 2.4808 2.4808v2.8514" fill="none"/>
 <path d="m0.5 28.846v-3.6671c0-3.1904 3.1904-3.1904 3.1904-3.1904h102.88s7.3158 0 7.3158-7.3158c0 7.3158 7.3158 7.3158 7.3158 7.3158h102.88s3.1904 0 3.1904 3.1904v3.6671" fill="none"/>
 <text x="93.2068928399" y="39.8464566929" stroke="none">Mat&lt;T&gt;::Metadata</text>
-<text x="76.3661417323" y="107.712598425" font-size="9" font-style="italic" stroke="none">(length determined by width, height and stride)</text>
+<text x="76.3661417323" y="107.712598425" font-size="9" font-style="italic" stroke="none">(length determined by width, height, and stride)</text>
 <rect x="85.539" y="113.89" width="42.52" height="28.346" fill="none"/>
 <text x="102.634173536" y="131.362766056" stroke="none">T</text>
 <rect x="128.06" y="113.89" width="42.52" height="28.346" fill="none"/>
