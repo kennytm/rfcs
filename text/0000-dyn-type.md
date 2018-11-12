@@ -340,7 +340,7 @@ unsafe impl<T, const width: usize, const height: usize> Unsize<Mat<T>> for [[T; 
 }
 ```
 
-Unsizing works not just between sized and unsized type, it can be done between two DSTs too!
+Unsizing works not just between sized and unsized types, it can be done between two DSTs too!
 
 ```rust ,ignore
 unsafe impl<T: const width: usize> Unsize<Mat<T>> for [[T; width]] {
