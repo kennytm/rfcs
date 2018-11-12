@@ -1537,7 +1537,7 @@ unsafe impl<T, const width: usize> Unsize<Mat<T>> for [[T; width]] {
 }
 ```
 
-Note that most unsizing implementations requires const generics ([RFC #2000]) to make sense.
+Note that most unsizing implementations require const generics ([RFC #2000]) to make sense.
 
 ### Interaction with RFC #1909
 
