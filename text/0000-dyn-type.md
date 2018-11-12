@@ -205,7 +205,7 @@ This, however, has a problem that cannot be sub-sliced,
 because `Index` requires you to return a reference without allocation!
 
 ```rust ,ignore
-impl<T> Index<Range<usize>, Range<usize>> for MatrixData<T> {
+impl<T> Index<(Range<usize>, Range<usize>)> for MatrixData<T> {
     type Output = Self;
     fn index(&self, index: (Range<usize>, Range<usize>)) -> &Self {
         // Ok, how could you obtain a sub-matrix of `self`
