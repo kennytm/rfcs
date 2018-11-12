@@ -1494,7 +1494,7 @@ if it turns out to cause mis-compilation ([issue #31681]), we may need to remove
 ### Unsizing
 
 Unsizing is a kind of coercion between two smart pointers `*T` and `*U`
-where both interprets the memory content in the same way, and `*U` is more general than `*T`.
+where both interpret the memory content in the same way, and `*U` is more general than `*T`.
 Unsizing from `*T` to `*U` is mainly a way to fabricate a correct `U::Meta` value.
 
 ```rust ,ignore
