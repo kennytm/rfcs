@@ -1195,7 +1195,7 @@ The `size_of_val` and `align_of_val` of a custom DST is equal to its reduction.
 
 ### Drop
 
-Relax bounds for the `needs_drop` intrinsic to check DSTs.
+Relax the bounds for the `needs_drop` intrinsic to check DSTs.
 
 ```rust
 fn needs_drop<T: ?Sized>() -> bool;
