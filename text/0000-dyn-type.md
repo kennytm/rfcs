@@ -428,7 +428,7 @@ impl<T> Index<(Range<usize>, Range<usize>)> for Mat<T> {
 }
 ```
 
-Note that we still need unsafety (via pointer arithmetic and dereferencing) in order to create a sub-matrix.
+Note that we still need unsafety (via pointer arithmetic and dereferencing) to create a sub-matrix.
 
 #### Boxing a matrix
 
