@@ -171,7 +171,7 @@ Introducing DSTs in Rust allows us to separate the concern of “where to place 
 “how to use the content in this memory region”.
 This allows, e.g. slices to be easily supported by any resource management schemes, be it a raw pointer `*const [T]` or `*mut [T]`,
 shared reference `&[T]`, owned box `Box<[T]>`, ref-counted container `Rc<[T]>`,
-even third-party smart pointers like `Gc<'root, [T]>`.
+and even third-party smart pointers like `Gc<'root, [T]>`.
 
 ### The case for custom DSTs
 
