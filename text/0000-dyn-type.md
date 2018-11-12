@@ -159,7 +159,7 @@ See the [What do we want to support?](#what-do-we-want-to-support) section for m
 ### Dynamic sized types
 
 Dynamic-sized types (DSTs) are types where the memory structure cannot be sufficiently determined at compile time.
-Memory structure means the allocation size, data alignment, destructor, etc. In order to know these,
+Memory structure means the allocation size, data alignment, destructor, etc. To know these,
 pointers to DSTs will need to carry additional *metadata* to supplement the calculation at runtime.
 In Rust there are two built-in DSTs:
 
